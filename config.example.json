@@ -1,0 +1,33 @@
+{
+  "channel": "C0123456789",
+  "user": "U0123456789",
+  "name": "Rasmus",
+  "icon": ":hatched_chick:",
+  "slack": {
+    "token_file": "~/.secrets/slack.token",
+    "cookie_file": "~/.secrets/slack-cookie.token"
+  },
+  "jira_url": "https://acme.atlassian.net",
+  "jira_projects": ["ADE"],
+  "dispatcher": {
+    "label": "boss",
+    "runner": "opencode",
+    "model": "github-copilot/claude-haiku-5.5",
+    "workdir": "~/slack-agent",
+    "auto": false,
+    "memory_lines": 200
+  },
+  "worker": {
+    "runner": "opencode",
+    "models": {
+      "opencode": "",
+      "claude": "",
+      "pi": ""
+    },
+    "auto": false
+  },
+  "repos": {
+    "client": "~/code/client",
+    "api": "~/code/api"
+  }
+}

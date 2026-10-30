@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rasmusjosefsson/slack-relay/config.schema.json",
+  "title": "slack-relay config",
+  "description": "~/.config/slack-relay/config.json. Every key is optional except channel and user; missing keys use these defaults.",
+  "type": "object",
+  "required": ["channel", "user"],
+  "properties": {
+    "channel": {
+      "title": "Slack channel",
+      "description": "Conversation ID of the private channel the bot reads and posts in. `slack-relay config set channel` also accepts the channel link.",
+      "type": "string",
+      "pattern": "^[CDG][A-Z0-9]{8,}$",
+      "default": ""
+    },
+    "user": {
+      "title": "Your Slack member ID",
+      "description": "Only messages written by this user are read. Slack profile → ⋮ → Copy member ID.",
+      "type": "string",
+      "pattern": "^[UW][A-Z0-9]{8,}$",
+      "default": ""
+    },
+    "name": {
+      "title": "Your name",
+      "description": "How the agents address you.",
+      "type": "string",
+      "default": ""
+    },
+    "icon": {
+      "title": "Post icon",
+      "description": "Emoji in front of every agent post.",
+      "type": "string",
+      "minLength": 1,
+      "default": ":robot_face:"
+    },
+    "slack": {
+      "title": "Slack login",
+      "description": "Files holding your own Slack token, and its d cookie for a browser (xoxc-) token. Posts are sent as you, and serve checks the token belongs to user.",
+      "type": "object",
+      "properties": {
+        "token_file": {
+          "title": "Token file",
+          "type": "string",
+          "minLength": 1,
+          "default": "~/.config/slack-relay/slack-token"
+        },
+        "cookie_file": {
+          "title": "Cookie file",
+          "description": "Needed for xoxc- tokens. Empty for xoxp- tokens.",
+          "type": "string",
+          "default": "~/.config/slack-relay/slack-cookie"
+        }
+      }
+    },
+    "jira_url": {
+      "title": "Jira site",
+      "description": "Base address for ticket links, e.g. https://acme.atlassian.net. Empty turns Jira links off.",
+      "type": "string",
+      "default": ""
+    },
+    "jira_projects": {
+      "title": "Jira projects to link",
+      "description": "Keys like ADE-123 from these projects become links in every post.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]+$" },
+      "default": []
+    },
+    "dispatcher": {
+      "title": "Dispatcher",
+      "description": "Answers @bot messages in a fresh session each time and starts workers.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "title": "Name",
+          "description": "Write @bot <name>, or just @bot.",
+          "type": "string",
+          "pattern": "^[a-z0-9_-]+$",
+          "default": "boss"
+        },
+        "runner": {
+          "title": "Agent CLI",
+          "type": "string",
+          "enum": ["opencode", "claude", "pi"],
+          "default": "opencode"
+        },
+        "model": {
+          "title": "Model",
+          "description": "In the runner's own format, e.g. github-copilot/claude-haiku-5.5 for opencode. Empty uses the runner's default.",
+          "type": "string",
+          "default": ""
+        },
+        "workdir": {
+          "title": "Working folder",
+          "description": "Holds MEMORY.md.",
+          "type": "string",
+          "default": "~/slack-agent"
+        },
+        "auto": {
+          "title": "Skip permission prompts",
+          "description": "opencode --auto or claude --dangerously-skip-permissions. pi never asks.",
+          "type": "boolean",
+          "default": false
+        },
+        "memory_lines": {
+          "title": "Memory size",
+          "description": "Line limit the dispatcher keeps MEMORY.md under.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 200
+        }
+      }
+    },
+    "worker": {
+      "title": "Workers",
+      "description": "Agents started in a repo for real work. Each keeps its own session.",
+      "type": "object",
+      "properties": {
+        "runner": {
+          "title": "Default agent CLI",
+          "description": "spawn --runner overrides it per worker.",
+          "type": "string",
+          "enum": ["opencode", "claude", "pi"],
+          "default": "opencode"
+        },
+        "models": {
+          "title": "Model per runner",
+          "description": "Empty uses the runner's default.",
+          "type": "object",
+          "properties": {
+            "opencode": { "type": "string", "default": "" },
+            "claude": { "type": "string", "default": "" },
+            "pi": { "type": "string", "default": "" }
+          }
+        },
+        "auto": {
+          "title": "Skip permission prompts",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "repos": {
+      "title": "Repos",
+      "description": "Name → folder. Workers start in these folders; the name is also the worker's name.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_-]+$" },
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    }
+  }
+}
