@@ -192,13 +192,16 @@ slack_history() {
     (( ++pages < 20 )) && [[ -n "$cursor" ]] || break
   done
   slack_rows "$id" <<<"$response"
+  # A reply doesn't bring its parent back into history after oldest, so look for active threads
+  # among the newest messages too.
+  page=$(slack_api GET conversations.history "channel=$id" "limit=20") || return 1
   # Only threads the user started or replied in: other people's threads cost no API calls.
   while IFS= read -r thread; do
     [[ "$thread" =~ ^[0-9]+\.[0-9]+$ ]] || continue
     slack_api GET conversations.replies "channel=$id" "ts=$thread" "oldest=$since" "limit=100" \
       | jq --arg t "$thread" '.messages |= map(select(.ts != $t))' | slack_rows "$id"
   done < <(jq -r --arg s "$since" --arg me "$ME" '.messages[]? | select(.latest_reply != null and (.latest_reply | tonumber) > ($s | tonumber))
-    | select(.user == $me or ((.reply_users // []) | index($me) != null)) | .ts' <<<"$response")
+    | select(.user == $me or ((.reply_users // []) | index($me) != null)) | .ts' <<<"$response$page" | sort -u)
 }
 
 # slack_thread <channel> <thread_ts> <limit>: the whole thread, parent first.

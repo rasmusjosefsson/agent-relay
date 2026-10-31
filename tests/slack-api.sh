@@ -32,7 +32,12 @@ printf '%s %s %s\n' "$method" "$endpoint" "${params[*]}" >>"$FAKE_LOG"
 case "$endpoint" in
   auth.test) response='{"ok":true,"user_id":"U0123456789"}' ;;
   conversations.history)
-    if [[ " ${params[*]} " == *" cursor=page2 "* ]]; then
+    if [[ -n "${FAKE_QUIET:-}" ]]; then
+      # nothing new in the channel; an older thread of the user's got a reply
+      response='{"ok":true,"messages":[]}'
+      [[ " ${params[*]} " == *" oldest="* ]] \
+        || response='{"ok":true,"messages":[{"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","latest_reply":"450.000"}]}'
+    elif [[ " ${params[*]} " == *" cursor=page2 "* ]]; then
       response='{"ok":true,"messages":[
         {"ts":"120.000","user":"U0123456789","text":"!boss page two"},
         {"ts":"110.000","user":"U0OTHER001","text":"spam thread","thread_ts":"110.000","latest_reply":"260.000","reply_users":["U0OTHER001"]},
@@ -90,7 +95,11 @@ grep -Fxq "250.000${tab}id:C0000000001${tab}U0123456789${tab}@bot boss in thread
 grep -Fxq "150.000${tab}id:C0000000001${tab}bot:B1${tab}@bot boss spoofed${tab}" <<<"$rows" || fail "bot post must not look like the user: $rows"
 [[ "$(grep -c 'conversations.replies' "$FAKE_LOG")" -eq 2 ]] || fail "replies fetched for inactive threads or threads without the user: $(cat "$FAKE_LOG")"
 ! grep -q 'conversations.replies .*ts=110.000' "$FAKE_LOG" || fail "fetched a thread the user is not in"
+
 grep -q 'conversations.replies .*oldest=100.000' "$FAKE_LOG" || fail "replies not limited to new ones"
+: >"$FAKE_LOG"
+FAKE_QUIET=1 "$relay" _slack history C0000000001 50 400.000 >/dev/null
+grep -q 'conversations.replies .*ts=200.000' "$FAKE_LOG" || fail "missed a reply in a thread older than the last poll: $(cat "$FAKE_LOG")"
 
 rows=$("$relay" _slack history C0000000001 1)
 ! grep -q 'conversations.replies' <(tail -n 1 "$FAKE_LOG") || fail "history without since fetched threads"
