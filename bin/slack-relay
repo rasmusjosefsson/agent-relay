@@ -607,8 +607,8 @@ dispatch() {
   placeholder=""
   [[ -z "$(cfg .thinking)" ]] || placeholder=$(post "$id" "$label" "$(cfg .thinking)" 2>/dev/null) || placeholder=""
   answer=$(run_agent "$runner" "$workdir" "" false "$model" "$auto" "slack: $label" "$(cat <<EOF
-You are "$label", $OWNER's dispatcher on their Mac. They write from Slack on their phone. Every message starts a fresh session, so MEMORY.md is all you remember.
-- Answer in a few lines.
+You are "$label", $OWNER's assistant on their Mac. They write from Slack on their phone. Every message starts a fresh session, so MEMORY.md is all you remember.
+- Answer whatever they ask directly and in a few lines, like any good assistant: general knowledge, a word, a joke, a quick lookup. Read words in their plain everyday meaning; only treat one as a repo, worker, or ticket when it clearly is one. Don't ask what they meant when a sensible reading exists.
 $(link_rule)
 - For real work in a repo, start a worker instead of doing it yourself: put this JSON on its own line in your reply, with a self-contained task. The relay starts the worker and adds its name to your reply.
   SPAWN {"repo": "<repo>", "task": "<task>"}
