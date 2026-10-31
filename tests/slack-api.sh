@@ -34,20 +34,18 @@ case "$endpoint" in
   conversations.history)
     if [[ -n "${FAKE_QUIET:-}" ]]; then
       # nothing new in the channel; an older thread of the user's got a reply
-      response='{"ok":true,"messages":[]}'
-      [[ " ${params[*]} " == *" oldest="* ]] \
-        || response='{"ok":true,"messages":[{"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","latest_reply":"450.000"}]}'
+      response='{"ok":true,"response_metadata":{"next_cursor":"page2"},"messages":[{"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","latest_reply":"450.000"}]}'
     elif [[ " ${params[*]} " == *" cursor=page2 "* ]]; then
       response='{"ok":true,"messages":[
         {"ts":"120.000","user":"U0123456789","text":"!boss page two"},
         {"ts":"110.000","user":"U0OTHER001","text":"spam thread","thread_ts":"110.000","latest_reply":"260.000","reply_users":["U0OTHER001"]},
-        {"ts":"105.000","user":"U0OTHER001","text":"their thread","thread_ts":"105.000","latest_reply":"270.000","reply_users":["U0OTHER001","U0123456789"]}]}'
+        {"ts":"105.000","user":"U0OTHER001","text":"their thread","thread_ts":"105.000","latest_reply":"270.000","reply_users":["U0OTHER001","U0123456789"]},
+        {"ts":"90.000","user":"U0123456789","text":"old parent","thread_ts":"90.000","reply_count":1,"latest_reply":"95.000"}]}'
     else
-    response='{"ok":true,"response_metadata":{"next_cursor":"'"$([[ " ${params[*]} " == *" oldest="* ]] && echo page2 || true)"'"},"messages":[
+    response='{"ok":true,"response_metadata":{"next_cursor":"page2"},"messages":[
       {"ts":"300.000","user":"U0123456789","text":"@bot boss hi"},
       {"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","reply_count":2,"latest_reply":"250.000"},
-      {"ts":"150.000","bot_id":"B1","username":"U0123456789","text":"@bot boss spoofed"},
-      {"ts":"90.000","user":"U0123456789","text":"old parent","thread_ts":"90.000","reply_count":1,"latest_reply":"95.000"}]}'
+      {"ts":"150.000","bot_id":"B1","username":"U0123456789","text":"@bot boss spoofed"}]}'
     fi
     ;;
   conversations.replies)
@@ -83,14 +81,14 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 [[ "$("$relay" _slack info C0000000001)" == relay-test ]] || fail "channel name"
 "$relay" _slack info C0OTHER0001 2>/dev/null && fail "looked up a channel outside the config"
 "$relay" _slack update C0000000001 400.000 "edited"
-grep -Fxq 'POST chat.update channel=C0000000001 ts=400.000 text=edited' "$FAKE_LOG" || fail "update: $(tail -n 1 "$FAKE_LOG")"
+grep -Fxq 'POST chat.update channel=C0000000001 ts=400.000 text=edited parse=none' "$FAKE_LOG" || fail "update: $(tail -n 1 "$FAKE_LOG")"
 "$relay" _slack update C0OTHER0001 400.000 "edited" 2>/dev/null && fail "edited a message outside the config"
 
 rows=$("$relay" _slack history C0000000001 50 100.000)
 [[ "$(grep -c . <<<"$rows")" -eq 9 ]] || fail "expected 7 channel rows over 2 pages and 2 replies: $rows"
 grep -Fxq "120.000${tab}id:C0000000001${tab}U0123456789${tab}!boss page two${tab}" <<<"$rows" || fail "second page not read: $rows"
 grep -Fxq "270.000${tab}id:C0000000001${tab}U0123456789${tab}!boss in their thread${tab}105.000" <<<"$rows" || fail "reply in someone else's thread missing: $rows"
-grep -q 'conversations.history .*oldest=100.000' "$FAKE_LOG" || fail "history not limited to new messages"
+[[ "$(grep -c 'conversations.history' "$FAKE_LOG")" -eq 2 ]] || fail "expected one page past the last poll, then stop: $(grep history "$FAKE_LOG")"
 grep -Fxq "250.000${tab}id:C0000000001${tab}U0123456789${tab}@bot boss in thread${tab}200.000" <<<"$rows" || fail "thread reply row: $rows"
 grep -Fxq "150.000${tab}id:C0000000001${tab}bot:B1${tab}@bot boss spoofed${tab}" <<<"$rows" || fail "bot post must not look like the user: $rows"
 [[ "$(grep -c 'conversations.replies' "$FAKE_LOG")" -eq 2 ]] || fail "replies fetched for inactive threads or threads without the user: $(cat "$FAKE_LOG")"
@@ -100,6 +98,7 @@ grep -q 'conversations.replies .*oldest=100.000' "$FAKE_LOG" || fail "replies no
 : >"$FAKE_LOG"
 FAKE_QUIET=1 "$relay" _slack history C0000000001 50 400.000 >/dev/null
 grep -q 'conversations.replies .*ts=200.000' "$FAKE_LOG" || fail "missed a reply in a thread older than the last poll: $(cat "$FAKE_LOG")"
+[[ "$(grep -c 'conversations.history' "$FAKE_LOG")" -eq 1 ]] || fail "a quiet poll should cost one history request: $(grep history "$FAKE_LOG")"
 
 rows=$("$relay" _slack history C0000000001 1)
 ! grep -q 'conversations.replies' <(tail -n 1 "$FAKE_LOG") || fail "history without since fetched threads"

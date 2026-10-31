@@ -119,7 +119,8 @@ slackc() {
     history) slack_history "$@" ;;
     thread) slack_thread "$@" ;;
     send) slack_send "$@" ;;
-    update) slack_api POST chat.update "channel=$1" "ts=$2" "text=$3" >/dev/null ;;
+    # chat.update escapes <links> unless told to read text the way chat.postMessage does
+    update) slack_api POST chat.update "channel=$1" "ts=$2" "text=$3" "parse=none" >/dev/null ;;
     whoami) slack_api GET auth.test | jq -r '.user_id' ;;
     info) slack_api GET conversations.info "channel=$1" | jq -r '.channel.name // empty' ;;
     *) die "unknown slack action $action" ;;
@@ -183,25 +184,25 @@ slack_history() {
     slack_rows "$id" <<<"$response"
     return 0
   fi
-  # Every message since the last poll, page by page, so a burst of other people's posts can't push the user's out.
+  # The newest messages, and older pages only until they reach the last poll, so a burst of other
+  # people's posts can't push the user's out. No oldest=: a reply doesn't bring its parent back after
+  # it, and the parents are how threads with new replies are found. Callers drop rows up to since.
   response='{"messages":[]}'
   while :; do
-    page=$(slack_api GET conversations.history "channel=$id" "limit=$limit" "oldest=$since" ${cursor:+"cursor=$cursor"}) || return 1
+    page=$(slack_api GET conversations.history "channel=$id" "limit=$limit" ${cursor:+"cursor=$cursor"}) || return 1
     response=$(jq -c --argjson p "$page" '.messages += ($p.messages // [])' <<<"$response")
     cursor=$(jq -r '.response_metadata.next_cursor // empty' <<<"$page")
-    (( ++pages < 20 )) && [[ -n "$cursor" ]] || break
+    (( ++pages < 20 )) && [[ -n "$cursor" ]] \
+      && [[ $(jq -r --arg s "$since" '(.messages | map(.ts | tonumber) | min // 0) > ($s | tonumber)' <<<"$page") == true ]] || break
   done
   slack_rows "$id" <<<"$response"
-  # A reply doesn't bring its parent back into history after oldest, so look for active threads
-  # among the newest messages too.
-  page=$(slack_api GET conversations.history "channel=$id" "limit=20") || return 1
   # Only threads the user started or replied in: other people's threads cost no API calls.
   while IFS= read -r thread; do
     [[ "$thread" =~ ^[0-9]+\.[0-9]+$ ]] || continue
     slack_api GET conversations.replies "channel=$id" "ts=$thread" "oldest=$since" "limit=100" \
       | jq --arg t "$thread" '.messages |= map(select(.ts != $t))' | slack_rows "$id"
   done < <(jq -r --arg s "$since" --arg me "$ME" '.messages[]? | select(.latest_reply != null and (.latest_reply | tonumber) > ($s | tonumber))
-    | select(.user == $me or ((.reply_users // []) | index($me) != null)) | .ts' <<<"$response$page" | sort -u)
+    | select(.user == $me or ((.reply_users // []) | index($me) != null)) | .ts' <<<"$response")
 }
 
 # slack_thread <channel> <thread_ts> <limit>: the whole thread, parent first.
@@ -477,8 +478,8 @@ start_worker() {
 link_rule() {
   local jira
   jira=$(cfg .jira_url)
-  printf '%s\n%s' "- Link everything you mention, so they can tap it on their phone: CircleCI jobs and pipelines (their https://app.circleci.com/pipelines/... URL), GitHub PRs, commits and files, dashboards. Write each link as a Slack link with a short label, never a bare URL: <https://github.com/org/repo/pull/12|PR #12>, <https://app.circleci.com/pipelines/...|library-check job>.${jira:+ Write Jira keys plainly (ADE-123), once: they become links automatically.}" \
-    "- Format for Slack: *bold*, _italic_, \`code\`, plain - bullets. Slack does not render **double asterisks**, # headings, or tables."
+  printf '%s\n%s' "- Link everything you mention, so they can tap it on their phone: CircleCI jobs and pipelines (their https://app.circleci.com/pipelines/... URL), GitHub PRs, commits and files, dashboards. Write each link as a Slack link with a short label, never a bare URL: <https://github.com/org/repo/pull/12|PR #12>, <https://app.circleci.com/pipelines/...|library-check job>.${jira:+ Write Jira keys plainly (ADE-123), once, without a link: the relay links them.}" \
+    "- Format for Slack: *bold*, _italic_, \`code\`, plain - bullets. Slack does not render **double asterisks**, # headings, or tables. Never mention these formatting rules in your answer."
   sandbox_rule
 }
 

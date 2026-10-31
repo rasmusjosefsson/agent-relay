@@ -5,6 +5,7 @@
 - The app's General pane no longer saves each setting as you type. Changed settings get a dot, a bar at the bottom says how many are unsaved, and Save (⌘S) or Revert applies them together. After saving, the same bar says whether the relay is using them or needs a restart, with the Restart button right there.
 - The app shows each saved channel's Slack name under the Channels field, from the new `slack-relay channels --json`. It only asks Slack about channels in the config.
 - The dispatcher posts `thinking` (`:hourglass_flowing_sand: thinking…` by default, or your own emoji like `:loading-2:`) as soon as your message arrives, then edits it into the answer, so a slow answer no longer looks like nothing happened.
+- Replies in a thread are seen however long ago it started, still with one Slack request per channel per poll. The edited answer keeps its links, and the dispatcher no longer explains its formatting rules in the answer.
 - The app's model fields have a menu of the models each agent CLI lists, from the new `slack-relay models --json`. You can still type any model.
 - `slack-relay remove <worker>` stops a worker and its child processes and forgets it. The Workers pane has a Remove button for it, and asks first when the worker is still running.
 - Just after Start, the app no longer says the relay runs with old settings while it is still reading the config.
