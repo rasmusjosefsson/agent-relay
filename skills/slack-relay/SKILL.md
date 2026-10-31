@@ -17,8 +17,8 @@ CHANNEL=$(slack-relay config get channel)
 ## Messages
 
 - Every agent post is `<icon> [label] <text>`. The label is the agent's one-word name.
-- The user replies with `@bot <label> <text>`, in the channel or in any thread. Only their own messages count; other people, bots, and agent posts are skipped.
-- A reply goes where the `@bot` message was. A worker started from a thread posts its questions and result in that thread.
+- The user replies with `!<label> <text>` (`@bot <label> <text>` also works), in the channel or in any thread. Only their own messages count; other people, bots, and agent posts are skipped.
+- A reply goes where the `!` message was. A worker started from a thread posts its questions and result in that thread.
 
 ## Permission
 
@@ -40,7 +40,7 @@ Pick a one-word label for this task (repo or task name, such as `client`) and ke
 2. When you need a decision, post the question and block until they answer:
 
    ```bash
-   slack-relay ask "id:$CHANNEL" client "Commit or open a PR? reply: @bot client pr" --timeout 540
+   slack-relay ask "id:$CHANNEL" client "Commit or open a PR? reply: !client pr" --timeout 540
    ```
 
    Keep `--timeout` below your shell tool's limit (Claude Code stops a command after 10 minutes). It prints their reply and exits 0. Exit 3 means no reply yet: run the `slack-relay wait …` command it printed on stderr, which keeps waiting from the same point. Give up, and post that you stopped, only when they have been silent longer than the task can wait.
@@ -53,9 +53,9 @@ Write links as Slack links with a short label (`<https://github.com/org/repo/pul
 
 `slack-relay serve` is the always-on loop. Start it only when the user asks for it.
 
-- `@bot <msg>` goes to the dispatcher (`dispatcher.label`, default `boss`), unless its first word names a worker. The dispatcher starts a fresh session each time on `dispatcher.runner` and `dispatcher.model`, with only `MEMORY.md` in `dispatcher.workdir` as memory, plus the user's earlier messages when they write in a thread. It answers quick things and starts workers.
+- `!<msg>` goes to the dispatcher (`dispatcher.label`, default `boss`), unless its first word names a worker. The dispatcher starts a fresh session each time on `dispatcher.runner` with that runner's model from `dispatcher.models`, with only `MEMORY.md` in `dispatcher.workdir` as memory, plus the user's earlier messages when they write in a thread. It answers quick things and starts workers.
 - `slack-relay spawn <repo> "<task>" [--runner opencode|claude|pi] [--model ID]` starts a worker in that repo's folder from `repos`, with its own session. The worker is named after the repo (`client`, then `client-2`), asks with `ask`, and its final reply is posted for it.
-- `@bot <worker> <msg>` to a finished worker resumes its session. While a worker runs, replies reach it only through its own `ask`.
+- `!<worker> <msg>` to a finished worker resumes its session. While a worker runs, replies reach it only through its own `ask`.
 - `auto` maps to `opencode --auto` or `claude --dangerously-skip-permissions`. `pi -p` runs tools without asking either way.
 
 ## Configure and debug

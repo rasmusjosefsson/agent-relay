@@ -12,7 +12,11 @@
   "dispatcher": {
     "label": "boss",
     "runner": "opencode",
-    "model": "github-copilot/claude-haiku-5.5",
+    "models": {
+      "opencode": "github-copilot/claude-haiku-5.5",
+      "claude": "haiku",
+      "pi": ""
+    },
     "workdir": "~/slack-agent",
     "auto": false,
     "memory_lines": 200

@@ -1,0 +1,243 @@
+import Foundation
+import Observation
+
+/// Everything the window shows, read through the CLI. Status polls; the rest loads when a pane opens.
+@MainActor
+@Observable
+final class Store {
+    let cli: RelayCLI
+
+    var status: Status?
+    var statusError: String?
+    var connectors: [Connector]?
+    var checking = Set<String>()
+    var memory: Memory?
+    var doctor: [DoctorCheck]?
+    var doctorRunning = false
+    var fields: ConfigFields?
+    /// Per-key error from the last `config set`, shown under the field.
+    var fieldErrors: [String: String] = [:]
+    var serveAction: String?
+    var serveError: String?
+    var memoryError: String?
+    /// Settings edited in the form but not saved yet, by key; Save writes them all at once.
+    var drafts: [String: JSON] = [:]
+    /// Keys whose text doesn't parse yet (JSON editor); Save waits for them.
+    var invalid = Set<String>()
+    var saving = false
+    /// Counts Revert presses, so editors holding text that never became a draft reset too.
+    var reverts = 0
+    /// An error from the last save that names no field.
+    var saveError: String?
+    /// Last successful setting change, to tell whether serve has read it yet
+    var savedAt: Date?
+    /// `user` is read once when serve starts
+    var restartNeeded = false
+    /// Models each agent CLI lists, by runner, for the model fields' menus
+    var models: [String: [String]] = [:]
+    /// Slack's name for each saved channel ID, nil when Slack won't tell
+    var channelNames: [String: String?] = [:]
+    /// Error from the last `remove`, by worker
+    var workerErrors: [String: String] = [:]
+
+    private var polling: Task<Void, Never>?
+    private let decoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return d
+    }()
+
+    init(cli: RelayCLI) {
+        self.cli = cli
+    }
+
+    var activeWorkers: [Worker] { status?.workers.filter(\.isActive) ?? [] }
+    var waitingCount: Int { status?.workers.filter { $0.status == "waiting" }.count ?? 0 }
+    var failingConnectors: Int { connectors?.filter { $0.ok == false }.count ?? 0 }
+    var trigger: String { fields?.fields.first { $0.key == "trigger" }?.value?.string ?? "!" }
+
+    enum Applied { case live, pending, restart }
+
+    /// Whether the running serve uses the saved settings; nil when it isn't running.
+    var applied: Applied? {
+        guard let serve = status?.serve, serve.running else { return nil }
+        if restartNeeded { return .restart }
+        // a starting serve writes serve.json just before it reads the config; one from before live reload never writes config_loaded
+        guard let loaded = serve.configLoaded.flatMap({ ISO8601DateFormatter().date(from: $0) }) else {
+            return serve.lastPoll == nil ? .pending : .restart
+        }
+        // config_loaded has whole seconds
+        if let savedAt, loaded < savedAt.addingTimeInterval(-1) { return .pending }
+        return .live
+    }
+
+    func startPolling() {
+        polling?.cancel()
+        polling = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshStatus()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, _ result: CLIResult) -> T? {
+        try? decoder.decode(type, from: result.stdout)
+    }
+
+    func refreshStatus() async {
+        let result = await cli.run("status", "--json")
+        if let status = decode(Status.self, result) {
+            if status != self.status { self.status = status }
+            statusError = nil
+        } else {
+            statusError = result.message.isEmpty ? "slack-relay status failed" : result.message
+        }
+    }
+
+    /// `connectors --json` exits 1 when any check fails; the JSON is still complete.
+    func checkConnectors(_ names: [String] = []) async {
+        let all = names.isEmpty ? (connectors?.map(\.name) ?? []) : names
+        checking.formUnion(all.isEmpty ? ["*"] : all)
+        defer { checking.subtract(all.isEmpty ? ["*"] : all) }
+        guard let rows = decode([Connector].self, await cli.run(["connectors", "--json"] + names, stdin: nil)) else { return }
+        if names.isEmpty || connectors == nil {
+            connectors = rows
+        } else {
+            for row in rows {
+                if let i = connectors?.firstIndex(where: { $0.name == row.name }) { connectors?[i] = row }
+            }
+        }
+    }
+
+    func loadMemory() async {
+        memory = decode(Memory.self, await cli.run("memory", "--json"))
+    }
+
+    func saveMemory(_ text: String) async {
+        let result = await cli.run(["memory", "set"], stdin: text)
+        memoryError = result.ok ? nil : result.message
+        await loadMemory()
+    }
+
+    func runDoctor() async {
+        doctorRunning = true
+        defer { doctorRunning = false }
+        // doctor exits 1 when a check fails
+        doctor = decode([DoctorCheck].self, await cli.run("doctor", "--json"))
+    }
+
+    /// The value the form shows: the draft when there is one.
+    func value(_ key: String) -> JSON? {
+        drafts[key] ?? fields?.fields.first { $0.key == key }?.value
+    }
+
+    /// Records an edit; one that goes back to the saved value is no edit.
+    func edit(_ key: String, _ value: JSON) {
+        let saved = fields?.fields.first { $0.key == key }?.value
+        drafts[key] = value == saved ? nil : value
+        fieldErrors[key] = nil
+        saveError = nil
+    }
+
+    func revert() {
+        drafts = [:]
+        invalid = []
+        reverts += 1
+        fieldErrors = [:]
+        saveError = nil
+    }
+
+    /// Writes every draft with one `config apply`, so settings that depend on each other change together.
+    func save() async {
+        guard !drafts.isEmpty, invalid.isEmpty else { return }
+        saving = true
+        defer { saving = false }
+        let patch = ["set": drafts.mapValues(\.any)]
+        let data = (try? JSONSerialization.data(withJSONObject: patch)) ?? Data("{}".utf8)
+        let result = await cli.run(["config", "apply"], stdin: String(decoding: data, as: UTF8.self))
+        fieldErrors = [:]
+        guard result.ok else {
+            // "dispatcher.icon, worker.icon: message" goes under each key it names
+            var unplaced: [String] = []
+            for line in result.text.split(separator: "\n").map(String.init) + (result.text.isEmpty ? [result.message] : []) {
+                guard let colon = line.range(of: ": ") else { unplaced.append(line); continue }
+                let keys = line[..<colon.lowerBound].split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                let message = String(line[colon.upperBound...])
+                let shown = keys.filter { key in fields?.fields.contains { $0.key == key } == true }
+                if shown.isEmpty { unplaced.append(line) }
+                for key in shown { fieldErrors[key] = fieldErrors[key].map { "\($0) \(message)" } ?? message }
+            }
+            saveError = unplaced.isEmpty ? nil : unplaced.joined(separator: "\n")
+            return
+        }
+        for key in drafts.keys { saved(key) }
+        drafts = [:]
+        saveError = nil
+        await loadFields()
+        await refreshStatus()
+    }
+
+    func loadFields() async {
+        async let names = cli.run("channels", "--json")
+        if models.isEmpty, let listed = decode([String: [String]].self, await cli.run("models", "--json")) { models = listed }
+        fields = decode(ConfigFields.self, await cli.run("config", "fields", "--json"))
+        if let rows = decode([ChannelName].self, await names) {
+            channelNames = Dictionary(rows.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
+
+    /// Writes one setting as JSON so strings, numbers and objects all round-trip; returns success.
+    @discardableResult
+    func set(_ key: String, json: String) async -> Bool {
+        let result = await cli.run("config", "set", key, json)
+        fieldErrors[key] = result.ok ? nil : result.message
+        if result.ok {
+            saved(key)
+            await loadFields()
+            await refreshStatus()
+        }
+        return result.ok
+    }
+
+    func set(_ key: String, string: String) async -> Bool {
+        let data = try? JSONSerialization.data(withJSONObject: string, options: .fragmentsAllowed)
+        return await set(key, json: data.map { String(decoding: $0, as: UTF8.self) } ?? "\"\"")
+    }
+
+    func unset(_ key: String) async {
+        let result = await cli.run("config", "unset", key)
+        fieldErrors[key] = result.ok ? nil : result.message
+        if result.ok { saved(key) }
+        await loadFields()
+    }
+
+    private func saved(_ key: String) {
+        savedAt = .now
+        if key == "user", status?.serve.running == true { restartNeeded = true }
+    }
+
+    /// Stops the worker if it runs and deletes its record and log.
+    func removeWorker(_ name: String) async {
+        let result = await cli.run("remove", name)
+        workerErrors[name] = result.ok ? nil : result.message
+        await refreshStatus()
+    }
+
+    func startServe() async { await serve("start") }
+    func stopServe() async { await serve("stop") }
+
+    func restartServe() async {
+        await serve("stop")
+        if serveError == nil { await serve("start") }
+    }
+
+    private func serve(_ verb: String) async {
+        serveAction = verb
+        defer { serveAction = nil }
+        let result = await cli.run(verb)
+        serveError = result.ok ? nil : result.message
+        if result.ok && verb == "start" { restartNeeded = false }
+        await refreshStatus()
+    }
+}

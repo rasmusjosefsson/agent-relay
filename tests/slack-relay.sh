@@ -12,13 +12,22 @@ cat >"$WORK/bin/slack" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
 case $1 in
-  history) cat "$SLACK_FAKE_DIR/history.tsv" ;;
+  history)
+    if [[ -f "$SLACK_FAKE_DIR/history-$2.tsv" ]]; then cat "$SLACK_FAKE_DIR/history-$2.tsv"; else cat "$SLACK_FAKE_DIR/history.tsv"; fi
+    ;;
   thread) cat "$SLACK_FAKE_DIR/thread.tsv" ;;
   send)
     printf '%s\t%s\n' "id:$2" "$3" >>"$SLACK_FAKE_DIR/sent.tsv"
     printf '%s\t%s\n' "${4:--}" "$3" >>"$SLACK_FAKE_DIR/threads.tsv"
+    # the ts is "<line in sent.tsv>.<line in threads.tsv>", so an edit finds the post in both
+    echo "$(wc -l <"$SLACK_FAKE_DIR/sent.tsv" | tr -d ' ').$(wc -l <"$SLACK_FAKE_DIR/threads.tsv" | tr -d ' ')"
+    ;;
+  update)
+    TS=$3 TEXT=$4 perl -i -ne 'BEGIN { @n = split /\./, $ENV{TS} } s/\t.*/\t$ENV{TEXT}\n/s if $. == $n[$f]; print; if (eof) { close ARGV; $f++ }' "$SLACK_FAKE_DIR/sent.tsv" "$SLACK_FAKE_DIR/threads.tsv"
+    printf '%s\t%s\n' "$3" "$4" >>"$SLACK_FAKE_DIR/updates.tsv"
     ;;
   whoami) echo "$FAKE_WHOAMI" ;;
+  info) [[ "$2" == C0000000001 ]] && echo relay-test || exit 1 ;;
   *) exit 9 ;;
 esac
 FAKE
@@ -26,8 +35,18 @@ FAKE
 cat >"$WORK/bin/opencode" <<'FAKE'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${1:-}" != models ]] || { printf '%s\n' cheap/model oc/model; exit 0; }
 printf '%s\n' "$*" >>"$SLACK_FAKE_DIR/opencode-args.log"
 last_line=$(printf '%s\n' "${@: -1}" | tail -n 1)
+if [[ $last_line == *"opencode-fails"* ]]; then
+  jq -nc '{type: "error", error: {type: "unknown", message: "Invalid model reference: haiku"}}'
+  exit 1
+fi
+if [[ $last_line == *"spawn it"* ]]; then
+  t=$'On it.\nSPAWN {"repo": "client", "task": "from dispatcher", "runner": "pi", "name": "disp"}\nSPAWN {"repo": "nope", "task": "x"}'
+  jq -nc --arg t "$t" '{type: "text", part: {text: $t}}'
+  exit 0
+fi
 jq -nc --arg t "fake: $last_line" '{type: "text", part: {text: $t}}'
 FAKE
 chmod +x "$WORK/bin/slack" "$WORK/bin/opencode"
@@ -38,7 +57,11 @@ for runner in claude pi; do
 set -euo pipefail
 printf '%s\n' "\$*" >>"\$SLACK_FAKE_DIR/$runner-args.log"
 last_line=\$(printf '%s\n' "\${@: -1}" | tail -n 1)
-if [[ $runner == claude ]]; then
+if [[ $runner == claude && \$last_line == *claude-fails* ]]; then
+  echo "Warning: noise on stderr" >&2
+  jq -nc '{type: "result", is_error: true, result: "There is an issue with the selected model."}'
+  exit 1
+elif [[ $runner == claude ]]; then
   jq -nc --arg t "fake-claude: \$last_line" '{type: "result", is_error: false, result: \$t}'
 else
   printf 'fake-pi: %s\n' "\$last_line"
@@ -55,7 +78,7 @@ cat >"$WORK/config.json" <<EOF
   "jira_url": "https://jira.example/",
   "jira_projects": ["ADE"],
   "user": "$ME",
-  "dispatcher": { "label": "mac", "model": "cheap/model", "workdir": "$WORK/agent", "auto": false },
+  "dispatcher": { "label": "mac", "models": { "opencode": "cheap/model" }, "workdir": "$WORK/agent", "auto": false },
   "worker": { "models": { "opencode": "oc/model", "claude": "cl/model" }, "auto": false },
   "repos": { "client": "$WORK/client" }
 }
@@ -99,11 +122,13 @@ code=$?
 set -e
 [[ $code -eq 3 && -z "$out" ]] || fail "expected timeout exit 3 ignoring other users and bot posts, got $code '$out'"
 
-SLACK_RELAY_CONFIG=/nonexistent "$relay" post id:C0000000001 build "done: 3 files changed" >/dev/null
+# defaults apply to keys the config leaves out
+echo '{"channel": "C0000000001"}' >"$WORK/bare.json"
+SLACK_RELAY_CONFIG="$WORK/bare.json" "$relay" post id:C0000000001 build "done: 3 files changed" >/dev/null
 [[ "$(sent)" == "id:C0000000001${tab}:robot_face: [build] done: 3 files changed" ]] || fail "post sent '$(sent)'"
 
 rm -f "$WORK/sent.tsv"
-SLACK_RELAY_CONFIG=/nonexistent "$relay" post id:C0000000001 fmt $'# Status\n**Until it\'s proven:** see [the job](https://app.circleci.com/x) and https://acme.atlassian.net/browse/ADE-6425, not <https://acme.atlassian.net/browse/ADE-1|ADE-1>' >/dev/null
+SLACK_RELAY_CONFIG="$WORK/bare.json" "$relay" post id:C0000000001 fmt $'# Status\n**Until it\'s proven:** see [the job](https://app.circleci.com/x) and https://acme.atlassian.net/browse/ADE-6425, not <https://acme.atlassian.net/browse/ADE-1|ADE-1>' >/dev/null
 expected=$'id:C0000000001\t:robot_face: [fmt] *Status*\n*Until it\'s proven:* see <https://app.circleci.com/x|the job> and <https://acme.atlassian.net/browse/ADE-6425|ADE-6425>, not <https://acme.atlassian.net/browse/ADE-1|ADE-1>'
 [[ "$(sent)" == "$expected" ]] || fail "markdown not converted for Slack: $(sent)"
 
@@ -114,10 +139,13 @@ expected=$'id:C0000000001\t:hatched_chick: [fmt] <https://jira.example/browse/AD
 
 set +e
 "$relay" post C0000000001 build "x" 2>/dev/null; [[ $? -eq 1 ]] || fail "accepted channel without id:"
+out=$("$relay" post id:C0999999999 build "x" 2>&1); [[ $? -eq 1 && "$out" == *"not in the config"* ]] || fail "posted to a channel not in the config: $out"
+"$relay" wait id:C0999999999 build --timeout 1 >/dev/null 2>&1; [[ $? -eq 1 ]] || fail "read a channel not in the config"
+SLACK_RELAY_CHANNEL=C0999999999 "$relay" _slack send C0999999999 "x" - >/dev/null 2>&1; [[ $? -eq 1 ]] || fail "raw send to a channel not in the config"
 "$relay" post id:C0000000001 "two words" "x" 2>/dev/null; [[ $? -eq 1 ]] || fail "accepted multi-word label"
 set -e
 
-# serve: dispatcher gets a fresh, cheap session; unknown labels get a hint
+# serve: dispatcher gets a fresh, cheap session; a name that is no dispatcher or worker gets nothing
 rm -f "$WORK/sent.tsv"
 history \
   "1700000021.000000${tab}id:C0000000001${tab}$ME${tab}@bot what's the time?" \
@@ -125,8 +153,8 @@ history \
   "1700000019.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac hello"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000010.000000 "$relay" serve 2>/dev/null
 grep -Fq ":hatched_chick: [mac] fake: Message from Rasmus: hello" "$WORK/sent.tsv" || fail "dispatcher reply missing: $(sent)"
-grep -Fq ":hatched_chick: [mac] fake: Message from Rasmus: nope hi" "$WORK/sent.tsv" || fail "unknown name did not go to the dispatcher: $(sent)"
-grep -Fq ":hatched_chick: [mac] fake: Message from Rasmus: what's the time?" "$WORK/sent.tsv" || fail "@bot without a name did not go to the dispatcher: $(sent)"
+[[ "$(sent)" != *"nope"* ]] || fail "an unknown name got an answer: $(sent)"
+[[ "$(sent)" != *"what's the time"* ]] || fail "@bot without a name got an answer: $(sent)"
 grep -Fq -- "--model cheap/model" "$WORK/opencode-args.log" || fail "dispatcher model not used"
 ! grep -Fq -- "--session" "$WORK/opencode-args.log" || fail "dispatcher reused a session"
 [[ -f "$WORK/agent/MEMORY.md" ]] || fail "MEMORY.md not created"
@@ -167,6 +195,23 @@ history \
 out=$("$relay" wait id:C0000000001 build --since 1700000040.000000 --timeout 1)
 [[ "$out" == "option 1" ]] || fail "resumed wait returned '$out'"
 
+# dispatcher SPAWN lines: serve starts the worker itself and reports the name or the error
+rm -f "$WORK/sent.tsv"
+history "1700000047.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac spawn it"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000046.000000 "$relay" serve 2>/dev/null
+wait_for_status disp done
+grep -Fq ":hatched_chick: [mac] On it." "$WORK/sent.tsv" || fail "dispatcher text missing: $(sent)"
+grep -Fq "started [disp] in $WORK/client (pi session" "$WORK/sent.tsv" || fail "spawn result missing: $(sent)"
+grep -Fq "unknown repo 'nope'" "$WORK/sent.tsv" || fail "spawn error missing: $(sent)"
+! grep -Fq "SPAWN {" "$WORK/sent.tsv" || fail "SPAWN line leaked into Slack: $(sent)"
+grep -Fq ":hatched_chick: [disp] fake-pi: Task: from dispatcher" "$WORK/sent.tsv" || fail "dispatcher-spawned worker reply missing: $(sent)"
+
+# a failing opencode run reports the error from its JSON output, which is all it gives
+rm -f "$WORK/sent.tsv"
+history "1700000048.000000${tab}id:C0000000001${tab}$ME${tab}!mac opencode-fails"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000047.500000 "$relay" serve 2>/dev/null
+grep -Fq ":hatched_chick: [mac] error: Invalid model reference: haiku" "$WORK/sent.tsv" || fail "opencode error reason missing: $(sent)"
+
 # runners: pi dispatcher without a saved session, claude worker with --session-id then --resume
 jq '.dispatcher.runner = "pi" | .worker.runner = "claude"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 rm -f "$WORK/sent.tsv"
@@ -174,6 +219,28 @@ history "1700000050.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac hi pi"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000045.000000 "$relay" serve 2>/dev/null
 grep -Fq ":hatched_chick: [mac] fake-pi: Message from Rasmus: hi pi" "$WORK/sent.tsv" || fail "pi dispatcher reply missing: $(sent)"
 grep -Fq -- "-p --no-session" "$WORK/pi-args.log" || fail "pi dispatcher args: $(cat "$WORK/pi-args.log")"
+# "!" works like "@bot", and only the dispatcher's or a worker's name gets an answer
+history "1700000051.000000${tab}id:C0000000001${tab}$ME${tab}!mac what's the time" "1700000051.500000${tab}id:C0000000001${tab}$ME${tab}! MAC spaced out" \
+  "1700000051.600000${tab}id:C0000000001${tab}$ME${tab}!boss hi" "1700000051.700000${tab}id:C0000000001${tab}$ME${tab}!quak" "1700000051.800000${tab}id:C0000000001${tab}$ME${tab}!quak hell"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000050.500000 "$relay" serve 2>/dev/null
+grep -Fq ":hatched_chick: [mac] fake-pi: Message from Rasmus: what's the time" "$WORK/sent.tsv" || fail "! dispatcher reply missing: $(sent)"
+grep -Fq ":hatched_chick: [mac] fake-pi: Message from Rasmus: spaced out" "$WORK/sent.tsv" || fail "'! ' dispatcher reply missing: $(sent)"
+[[ "$(sent)" != *"quak"* && "$(sent)" != *"boss"* ]] || fail "a name that is no dispatcher or worker got an answer: $(sent)"
+jq '.dispatcher.runner = "claude"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
+history "1700000052.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac hi claude"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000051.000000 "$relay" serve 2>/dev/null
+grep -Fq ":hatched_chick: [mac] fake-claude: Message from Rasmus: hi claude" "$WORK/sent.tsv" || fail "claude dispatcher reply missing: $(sent)"
+grep -Fq -- '-p --output-format json --settings {"autoMemoryEnabled":false} --model haiku' "$WORK/claude-args.log" || fail "claude dispatcher args: $(cat "$WORK/claude-args.log")"
+# claude_settings reach every claude run, merged with the dispatcher's own settings
+jq '.claude_settings = {sandbox: {excludedCommands: ["acli *"]}}' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
+history "1700000053.000000${tab}id:C0000000001${tab}$ME${tab}!mac hi settings"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000052.500000 "$relay" serve 2>/dev/null
+grep -Fq -- '--settings {"sandbox":{"excludedCommands":["acli *"]},"autoMemoryEnabled":false}' "$WORK/claude-args.log" || fail "claude_settings not passed: $(tail -n 1 "$WORK/claude-args.log")"
+grep -Fq -- "- Run acli as one plain command each, with no pipes" "$WORK/claude-args.log" || fail "dispatcher prompt lacks the sandbox rule"
+"$relay" config set claude_settings '"acli *"' >/dev/null 2>&1 && fail "accepted non-object claude_settings"
+"$relay" config set show_label false >/dev/null && [[ "$(jq -c .show_label "$WORK/config.json")" == false ]] || fail "config set show_label false"
+"$relay" config unset show_label >/dev/null
+jq '.dispatcher.runner = "pi"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 
 out=$("$relay" spawn client "claude task")
 [[ "$out" == "started [client] in $WORK/client (claude session "* ]] || fail "claude spawn printed '$out'"
@@ -181,13 +248,19 @@ wait_for_status client done
 uuid=$(jq -r .session "$WORK/state/workers/client.json")
 [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || fail "claude session is not a UUID: $uuid"
 grep -Fq ":hatched_chick: [client] fake-claude: Task: claude task" "$WORK/sent.tsv" || fail "claude worker reply missing: $(sent)"
-history "1700000060.000000${tab}id:C0000000001${tab}$ME${tab}@bot client and again"
+history "1700000060.000000${tab}id:C0000000001${tab}$ME${tab}!client and again"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000055.000000 "$relay" serve 2>/dev/null
 for i in $(seq 1 50); do grep -Fq "fake-claude: and again" "$WORK/sent.tsv" 2>/dev/null && break; sleep 0.1; done
 wait_for_status client done
-claude_calls=$(grep '^-p --output-format json' "$WORK/claude-args.log")
+claude_calls=$(grep -E '^-p --output-format json --(session-id|resume) ' "$WORK/claude-args.log")
 [[ "$(sed -n 1p <<<"$claude_calls")" == "-p --output-format json --session-id $uuid "* ]] || fail "claude first turn: $(sed -n 1p <<<"$claude_calls")"
 [[ "$(sed -n 2p <<<"$claude_calls")" == "-p --output-format json --resume $uuid "* ]] || fail "claude resume: $(sed -n 2p <<<"$claude_calls")"
+
+# a failing claude run reports the JSON result, not its stderr
+out=$("$relay" spawn client "claude-fails" --name broken --runner claude)
+wait_for_status broken failed
+grep -Fq ":hatched_chick: [broken] error: There is an issue with the selected model." "$WORK/sent.tsv" || fail "claude error reason missing: $(sent)"
+! grep -Fq "noise on stderr" "$WORK/sent.tsv" || fail "claude stderr leaked into Slack"
 grep -Fq -- "--model cl/model" "$WORK/claude-args.log" || fail "claude worker did not use the claude model"
 
 # spawn --runner overrides the configured default per worker
@@ -223,10 +296,21 @@ grep -Fxq -- "- parent" "$WORK/opencode-args.log" || fail "thread parent missing
 grep -Fxq "1700000070.000000${tab}:hatched_chick: [mac] fake: Message from Rasmus: in a thread" "$WORK/threads.tsv" \
   || fail "thread reply not answered in thread: $(cat "$WORK/threads.tsv")"
 [[ $(wc -l <"$WORK/threads.tsv") -eq 1 ]] || fail "non-@bot thread messages triggered posts: $(cat "$WORK/threads.tsv")"
-rm -f "$WORK/opencode-args.log"
+grep -Fq "[mac] fake: Message from Rasmus: in a thread" "$WORK/updates.tsv" || fail "answer did not replace the thinking post"
+"$relay" config set thinking '""' >/dev/null
+rm -f "$WORK/opencode-args.log" "$WORK/threads.tsv" "$WORK/updates.tsv"
 history "1700000075.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac top level"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000074.000000 "$relay" serve 2>/dev/null
+[[ ! -e "$WORK/updates.tsv" ]] || fail "empty thinking still posted a placeholder: $(cat "$WORK/updates.tsv")"
+"$relay" config unset thinking >/dev/null
 ! grep -Fq "Slack thread" "$WORK/opencode-args.log" || fail "channel message got thread context"
+grep -Fxq "1700000075.000000${tab}:hatched_chick: [mac] fake: Message from Rasmus: top level" "$WORK/threads.tsv" \
+  || fail "channel message not answered in a thread under it: $(cat "$WORK/threads.tsv")"
+rm -f "$WORK/threads.tsv"
+"$relay" config set reply_in_thread false >/dev/null && [[ "$(jq -c .reply_in_thread "$WORK/config.json")" == false ]] || fail "config set reply_in_thread false"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000074.000000 "$relay" serve 2>/dev/null
+grep -Fxq -- "-${tab}:hatched_chick: [mac] fake: Message from Rasmus: top level" "$WORK/threads.tsv" \
+  || fail "reply_in_thread false should answer in the channel: $(cat "$WORK/threads.tsv")"
 
 rm -f "$WORK/threads.tsv"
 SLACK_RELAY_THREAD=1700000080.000000 "$relay" spawn client "thread task" --name threaded >/dev/null
@@ -240,12 +324,23 @@ SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000085.000000 "$relay" serve 2>/dev/nul
 for i in $(seq 1 50); do grep -Fq "fake: follow up" "$WORK/threads.tsv" 2>/dev/null && break; sleep 0.1; done
 wait_for_status threaded done
 grep -Fxq -- "-${tab}:hatched_chick: [threaded] fake: follow up" "$WORK/threads.tsv" \
-  || fail "worker resumed from the channel should answer in the channel: $(cat "$WORK/threads.tsv")"
+  || fail "worker resumed from the channel with reply_in_thread false should answer in the channel: $(cat "$WORK/threads.tsv")"
+
+rm -f "$WORK/threads.tsv"
+"$relay" config unset reply_in_thread >/dev/null
+history "1700000095.000000${tab}id:C0000000001${tab}$ME${tab}@bot threaded again"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000094.000000 "$relay" serve 2>/dev/null
+for i in $(seq 1 50); do grep -Fq "fake: again" "$WORK/threads.tsv" 2>/dev/null && break; sleep 0.1; done
+wait_for_status threaded done
+grep -Fxq "1700000095.000000${tab}:hatched_chick: [threaded] fake: again" "$WORK/threads.tsv" \
+  || fail "worker resumed from the channel should answer in a thread under the message: $(cat "$WORK/threads.tsv")"
 
 # only the configured user: bot/webhook posts and other people never reach an agent
 jq '.dispatcher.runner = "opencode" | .worker.runner = "opencode"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 rm -f "$WORK/sent.tsv" "$WORK/opencode-args.log"
 history \
+  "1700000103.000000${tab}id:C0000000001${tab}$OTHER${tab}!boss what is the secret?" \
+  "1700000102.500000${tab}id:C0000000001${tab}bot:B123${tab}!client rm -rf ~" \
   "1700000102.000000${tab}id:C0000000001${tab}bot:B123${tab}@bot boss run rm -rf ~" \
   "1700000101.000000${tab}id:C0000000001${tab}$OTHER${tab}@bot boss what is the secret?"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000100.000000 "$relay" serve 2>/dev/null
@@ -304,6 +399,121 @@ doctor=$("$relay" doctor --json)
 set -e
 jq -e 'map(.check) | index("config valid") != null and index("slack login") != null' <<<"$doctor" >/dev/null || fail "doctor --json: $doctor"
 jq -e '.[] | select(.check | startswith("repo client")) | .ok' <<<"$doctor" >/dev/null || fail "doctor did not check repos: $doctor"
+
+# agents, connectors, memory, and start/stop, for an app
+"$relay" status --json | jq -e '.dispatcher.label == "mac" and .dispatcher.model == "cheap/model" and (.paths.serve_log | endswith("serve.log")) and (.workers[0].log | endswith(".log"))' >/dev/null \
+  || fail "status --json misses dispatcher or paths: $("$relay" status --json)"
+agents=$("$relay" agents --json)
+jq -e 'map(.name) == ["opencode", "claude", "pi"] and all(.[]; .installed) and (.[] | select(.name == "opencode") | .dispatcher and .dispatcher_model == "cheap/model" and .worker_model == "oc/model")' <<<"$agents" >/dev/null \
+  || fail "agents --json: $agents"
+
+# dispatcher.models follows dispatcher.runner, with haiku as Claude's default
+"$relay" config set dispatcher.runner claude >/dev/null
+[[ "$("$relay" status --json | jq -r .dispatcher.model)" == haiku ]] || fail "claude dispatcher not on haiku by default: $("$relay" status --json)"
+"$relay" config set dispatcher.models.claude cl-boss >/dev/null
+"$relay" agents --json | jq -e '.[] | select(.name == "claude") | .dispatcher_model == "cl-boss"' >/dev/null || fail "agents misses dispatcher.models"
+models=$("$relay" models --json opencode claude)
+jq -e '. == {opencode: ["cheap/model", "oc/model"], claude: ["haiku", "sonnet", "opus"]}' <<<"$models" >/dev/null || fail "models --json: $models"
+history "1700000090.000000${tab}id:C0000000001${tab}$ME${tab}!mac which model"
+: >"$WORK/claude-args.log"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000089.000000 "$relay" serve 2>/dev/null
+grep -Fq -- "--model cl-boss" "$WORK/claude-args.log" || fail "claude dispatcher did not get its model: $(cat "$WORK/claude-args.log")"
+"$relay" config set dispatcher.runner opencode >/dev/null
+[[ "$("$relay" status --json | jq -r .dispatcher.model)" == cheap/model ]] || fail "switching runner kept the claude model"
+"$relay" config set dispatcher.models '{"claude": 1}' >/dev/null 2>&1 && fail "accepted a non-text dispatcher model"
+# the old single dispatcher.model is ignored, and doctor says so
+"$relay" config set dispatcher.model haiku >/dev/null
+[[ "$("$relay" status --json | jq -r .dispatcher.model)" == cheap/model ]] || fail "dispatcher.model still read"
+set +e; doctor=$("$relay" doctor --json); set -e
+jq -e '.[] | select(.check == "dispatcher model") | .ok == false' <<<"$doctor" >/dev/null || fail "doctor misses old dispatcher.model: $doctor"
+"$relay" config unset dispatcher.model >/dev/null
+"$relay" config unset dispatcher.models.claude >/dev/null
+
+"$relay" config set connectors.okc '{"title": "Fine", "check": "echo signed in as me"}' >/dev/null
+"$relay" config set connectors.badc '{"check": "echo expired >&2; exit 1"}' >/dev/null
+"$relay" config set connectors.offc '{"check": ""}' >/dev/null
+set +e
+connectors=$("$relay" connectors --json okc badc offc); code=$?
+set -e
+[[ $code -eq 1 ]] || fail "connectors exit $code with a failing check"
+jq -e 'map({(.name): [.ok, .detail]}) | add == {okc: [true, "signed in as me"], badc: [false, "expired"], offc: [null, "off"]}' <<<"$connectors" >/dev/null \
+  || fail "connectors --json: $connectors"
+jq -e '.[] | select(.name == "okc") | .title == "Fine"' <<<"$connectors" >/dev/null || fail "connector title: $connectors"
+"$relay" config set connectors.badc '{"check": "printf \"token xoxp-1234567890123456789012345678901234\""}' >/dev/null
+[[ "$("$relay" connectors badc)" != *1234567890123456789012345678901234* ]] || fail "connector detail showed a token"
+printf 'likes tea\nworks on client\n' | "$relay" memory set >/dev/null
+"$relay" memory --json | jq -e '.lines == 2 and .limit == 200 and (.text | contains("likes tea"))' >/dev/null || fail "memory --json: $("$relay" memory --json)"
+[[ "$("$relay" memory)" == $'likes tea\nworks on client' ]] || fail "memory show"
+"$relay" config schema | jq -e '.properties.connectors.default.github.check' >/dev/null || fail "config schema"
+"$relay" config fields --json | jq -e '(.groups | map(.key) | index("dispatcher")) and (.fields[] | select(.key == "dispatcher.memory_lines") | .type == "integer" and .value == 200) and (.fields[] | select(.key == "dispatcher.runner") | .enum | length == 3) and ([.fields[].key] | index("connectors") | not)' >/dev/null || fail "config fields --json"
+"$relay" start >/dev/null || fail "start failed: $(tail -n 5 "$WORK/state/serve.log")"
+"$relay" status --json | jq -e '.serve.running' >/dev/null || fail "start did not leave serve running"
+[[ "$("$relay" start)" == *"already running"* ]] || fail "second start"
+"$relay" stop >/dev/null || fail "stop failed"
+"$relay" status --json | jq -e '.serve.running | not' >/dev/null || fail "stop left serve running"
+
+# trigger, icons per role, no name tag, and more channels: answers go to the channel written in
+cp "$WORK/config.json" "$WORK/config.bak"
+jq '.trigger = ":zap:" | .show_label = false | .dispatcher.icon = ":crown:" | .worker.icon = ":hammer:" | .dispatcher.runner = "pi" | .channels = ["C0000000002", "C0000000001"]' \
+  "$WORK/config.bak" >"$WORK/config.json"
+rm -f "$WORK/sent.tsv"
+printf '%s\n' "1700000200.000000${tab}id:C0000000002${tab}$ME${tab}:zap: mac hello there" >"$WORK/history-C0000000002.tsv"
+history "1700000201.000000${tab}id:C0000000001${tab}$ME${tab}!old trigger"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000199.000000 "$relay" serve 2>/dev/null
+grep -Fxq "id:C0000000002${tab}:crown: fake-pi: Message from Rasmus: hello there" "$WORK/sent.tsv" || fail "custom trigger in a second channel: $(sent)"
+[[ "$(sent)" != *"old trigger"* ]] || fail "the default ! still triggered: $(sent)"
+jq -e '.channel == "C0000000001" and .channels == ["C0000000001", "C0000000002"]' "$WORK/state/serve.json" >/dev/null || fail "serve.json channels: $(cat "$WORK/state/serve.json")"
+rm -f "$WORK/sent.tsv"
+SLACK_RELAY_CHANNEL=C0000000002 "$relay" spawn client "chan task" --name chan --runner pi >/dev/null
+wait_for_status chan done
+grep -q "^id:C0000000002${tab}:hammer: fake-pi: " "$WORK/sent.tsv" || fail "worker did not post to its channel with its icon: $(sent)"
+jq -e '.channel == "C0000000002"' "$WORK/state/workers/chan.json" >/dev/null || fail "worker channel not saved"
+# remove stops a working worker together with its agent, and forgets a finished one
+bash -c 'sleep 30 & wait' & busy=$!
+perl -e 'select(undef,undef,undef,0.3)'
+agent=$(pgrep -P "$busy")
+jq -n --argjson pid "$busy" '{name: "busy", status: "running", pid: $pid}' >"$WORK/state/workers/busy.json"
+"$relay" remove busy chan >/dev/null || fail "remove failed"
+wait "$busy" 2>/dev/null || true
+! kill -0 "$agent" 2>/dev/null || fail "remove left the worker's agent running"
+[[ ! -e "$WORK/state/workers/busy.json" && ! -e "$WORK/state/workers/chan.json" && ! -e "$WORK/state/workers/chan.log" ]] || fail "remove kept worker files"
+"$relay" remove nope 2>/dev/null && fail "removed a worker that doesn't exist"
+"$relay" remove ../config 2>/dev/null && fail "remove accepted a path"
+slack=$("$relay" connectors --json slack)
+jq -e '. == [{name: "slack", title: "Slack", check: "", builtin: true, ok: true, detail: "signed in as '"$ME"', 2 channels readable"}]' <<<"$slack" >/dev/null || fail "slack connector: $slack"
+names=$("$relay" channels --json)
+jq -e '. == [{id: "C0000000001", name: "relay-test"}, {id: "C0000000002", name: null}]' <<<"$names" >/dev/null || fail "channel names: $names"
+"$relay" config set worker.icon '":zap:"' >/dev/null 2>&1 && fail "accepted an icon starting with the trigger"
+"$relay" config set channels '["nope"]' >/dev/null 2>&1 && fail "accepted a bad channel id"
+# apply saves a patch at once: a new icon that only fits the new trigger is fine together with it
+"$relay" config apply <<<'{"set": {"trigger": "!!", "worker.icon": ":zap:"}, "unset": ["show_label"]}' >/dev/null \
+  || fail "apply rejected trigger and icon changed together"
+jq -e '.trigger == "!!" and .worker.icon == ":zap:" and has("show_label") == false' "$WORK/config.json" >/dev/null || fail "apply did not save: $(cat "$WORK/config.json")"
+cp "$WORK/config.json" "$WORK/config.before"
+out=$("$relay" config apply <<<'{"set": {"trigger": ":zap:", "dispatcher.memory_lines": 0}}') && fail "apply accepted a bad patch"
+[[ "$out" == *"trigger: dispatcher.icon"* || "$out" == *"worker.icon"* ]] || fail "apply errors: $out"
+cmp -s "$WORK/config.json" "$WORK/config.before" || fail "a rejected apply changed the config"
+"$relay" config apply <<<'{"set": {"trigger": ":zap:", "worker.icon": ":hammer:", "show_label": false}}' >/dev/null || fail "apply could not restore"
+# a running serve picks up config changes on its next poll, and serve.json says what it uses
+rm -f "$WORK/sent.tsv" "$WORK/history-C0000000002.tsv" "$WORK/state/serve.json"
+history
+SLACK_RELAY_INTERVAL=0.2 SLACK_RELAY_SINCE=1700000300.000000 "$relay" serve 2>"$WORK/reload.log" &
+serve_pid=$!
+for i in $(seq 1 50); do jq -e '.trigger == ":zap:"' "$WORK/state/serve.json" >/dev/null 2>&1 && break; sleep 0.1; done
+kill -0 "$(jq -r '.pid' "$WORK/state/serve.json")" 2>/dev/null || fail "serve.json lost the pid: $(jq -c . "$WORK/state/serve.json") $(cat "$WORK/reload.log")"
+out=$("$relay" serve 2>&1) && fail "a second serve started"
+[[ "$out" == *"already running"* ]] || fail "second serve: $out"
+"$relay" config set trigger '";;"' >/dev/null
+"$relay" config set channels '[]' >/dev/null
+for i in $(seq 1 50); do jq -e '.trigger == ";;" and .channels == ["C0000000001"]' "$WORK/state/serve.json" >/dev/null 2>&1 && break; sleep 0.1; done
+jq -e '.trigger == ";;" and .channels == ["C0000000001"] and (.config_loaded | type) == "string"' "$WORK/state/serve.json" >/dev/null \
+  || fail "serve did not reload the config: $(cat "$WORK/state/serve.json") $(cat "$WORK/reload.log")"
+history "1700000301.000000${tab}id:C0000000001${tab}$ME${tab};; mac after reload"
+for i in $(seq 1 50); do grep -Fq "after reload" "$WORK/sent.tsv" 2>/dev/null && break; sleep 0.1; done
+grep -Fxq "id:C0000000001${tab}:crown: fake-pi: Message from Rasmus: after reload" "$WORK/sent.tsv" || fail "new trigger not used after reload: $(sent)"
+kill "$serve_pid"; wait "$serve_pid" 2>/dev/null || true
+rm -f "$WORK/state/serve.json"
+mv "$WORK/config.bak" "$WORK/config.json"
 
 # the Slack token must belong to the configured user
 set +e

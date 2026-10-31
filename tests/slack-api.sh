@@ -32,19 +32,34 @@ printf '%s %s %s\n' "$method" "$endpoint" "${params[*]}" >>"$FAKE_LOG"
 case "$endpoint" in
   auth.test) response='{"ok":true,"user_id":"U0123456789"}' ;;
   conversations.history)
-    response='{"ok":true,"messages":[
+    if [[ " ${params[*]} " == *" cursor=page2 "* ]]; then
+      response='{"ok":true,"messages":[
+        {"ts":"120.000","user":"U0123456789","text":"!boss page two"},
+        {"ts":"110.000","user":"U0OTHER001","text":"spam thread","thread_ts":"110.000","latest_reply":"260.000","reply_users":["U0OTHER001"]},
+        {"ts":"105.000","user":"U0OTHER001","text":"their thread","thread_ts":"105.000","latest_reply":"270.000","reply_users":["U0OTHER001","U0123456789"]}]}'
+    else
+    response='{"ok":true,"response_metadata":{"next_cursor":"'"$([[ " ${params[*]} " == *" oldest="* ]] && echo page2 || true)"'"},"messages":[
       {"ts":"300.000","user":"U0123456789","text":"@bot boss hi"},
       {"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","reply_count":2,"latest_reply":"250.000"},
       {"ts":"150.000","bot_id":"B1","username":"U0123456789","text":"@bot boss spoofed"},
       {"ts":"90.000","user":"U0123456789","text":"old parent","thread_ts":"90.000","reply_count":1,"latest_reply":"95.000"}]}'
+    fi
     ;;
   conversations.replies)
+    if [[ " ${params[*]} " == *" ts=105.000 "* ]]; then
+      response='{"ok":true,"messages":[
+        {"ts":"105.000","user":"U0OTHER001","text":"their thread","thread_ts":"105.000"},
+        {"ts":"270.000","user":"U0123456789","text":"!boss in their thread","thread_ts":"105.000"}]}'
+      printf '%s' "$response" >"$out"; printf '200'; exit 0
+    fi
     [[ " ${params[*]} " == *" ts=200.000 "* ]] || exit 93
     response='{"ok":true,"messages":[
       {"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000"},
       {"ts":"250.000","user":"U0123456789","text":"@bot boss in thread","thread_ts":"200.000"}]}'
     ;;
   chat.postMessage) response='{"ok":true,"ts":"400.000"}' ;;
+  chat.update) response='{"ok":true,"ts":"400.000"}' ;;
+  conversations.info) response='{"ok":true,"channel":{"id":"C0000000001","name":"relay-test"}}' ;;
   *) exit 94 ;;
 esac
 printf '%s' "$response" >"$out"
@@ -60,12 +75,21 @@ tab=$'\t'
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ "$("$relay" _slack whoami)" == U0123456789 ]] || fail "whoami"
+[[ "$("$relay" _slack info C0000000001)" == relay-test ]] || fail "channel name"
+"$relay" _slack info C0OTHER0001 2>/dev/null && fail "looked up a channel outside the config"
+"$relay" _slack update C0000000001 400.000 "edited"
+grep -Fxq 'POST chat.update channel=C0000000001 ts=400.000 text=edited' "$FAKE_LOG" || fail "update: $(tail -n 1 "$FAKE_LOG")"
+"$relay" _slack update C0OTHER0001 400.000 "edited" 2>/dev/null && fail "edited a message outside the config"
 
 rows=$("$relay" _slack history C0000000001 50 100.000)
-[[ "$(grep -c . <<<"$rows")" -eq 5 ]] || fail "expected 4 channel rows and 1 reply: $rows"
+[[ "$(grep -c . <<<"$rows")" -eq 9 ]] || fail "expected 7 channel rows over 2 pages and 2 replies: $rows"
+grep -Fxq "120.000${tab}id:C0000000001${tab}U0123456789${tab}!boss page two${tab}" <<<"$rows" || fail "second page not read: $rows"
+grep -Fxq "270.000${tab}id:C0000000001${tab}U0123456789${tab}!boss in their thread${tab}105.000" <<<"$rows" || fail "reply in someone else's thread missing: $rows"
+grep -q 'conversations.history .*oldest=100.000' "$FAKE_LOG" || fail "history not limited to new messages"
 grep -Fxq "250.000${tab}id:C0000000001${tab}U0123456789${tab}@bot boss in thread${tab}200.000" <<<"$rows" || fail "thread reply row: $rows"
 grep -Fxq "150.000${tab}id:C0000000001${tab}bot:B1${tab}@bot boss spoofed${tab}" <<<"$rows" || fail "bot post must not look like the user: $rows"
-[[ "$(grep -c 'conversations.replies' "$FAKE_LOG")" -eq 1 ]] || fail "replies fetched for inactive threads: $(cat "$FAKE_LOG")"
+[[ "$(grep -c 'conversations.replies' "$FAKE_LOG")" -eq 2 ]] || fail "replies fetched for inactive threads or threads without the user: $(cat "$FAKE_LOG")"
+! grep -q 'conversations.replies .*ts=110.000' "$FAKE_LOG" || fail "fetched a thread the user is not in"
 grep -q 'conversations.replies .*oldest=100.000' "$FAKE_LOG" || fail "replies not limited to new ones"
 
 rows=$("$relay" _slack history C0000000001 1)
@@ -74,9 +98,9 @@ rows=$("$relay" _slack history C0000000001 1)
 thread=$("$relay" _slack thread C0000000001 200.000 50)
 [[ "$(cut -f1 <<<"$thread" | paste -sd, -)" == "200.000,250.000" ]] || fail "thread rows: $thread"
 
-"$relay" _slack send C0000000001 "hello & <you>" -
+[[ $("$relay" _slack send C0000000001 "hello & <you>" -) == 400.000 ]] || fail "send did not print the new message's ts"
 grep -Fxq 'POST chat.postMessage channel=C0000000001 text=hello & <you>' "$FAKE_LOG" || fail "send: $(tail -n 1 "$FAKE_LOG")"
-"$relay" _slack send C0000000001 "in thread" 200.000
+"$relay" _slack send C0000000001 "in thread" 200.000 >/dev/null
 grep -Fxq 'POST chat.postMessage channel=C0000000001 text=in thread thread_ts=200.000' "$FAKE_LOG" || fail "thread send: $(tail -n 1 "$FAKE_LOG")"
 
 jq '.slack.cookie_file = ""' "$WORK/config.json" >"$WORK/c.json" && mv "$WORK/c.json" "$WORK/config.json"

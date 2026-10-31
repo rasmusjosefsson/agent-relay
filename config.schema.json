@@ -13,6 +13,13 @@
       "pattern": "^[CDG][A-Z0-9]{8,}$",
       "default": ""
     },
+    "channels": {
+      "title": "More channels",
+      "description": "Other conversation IDs to read too. Agents answer in the channel you wrote in, and never read or post anywhere not listed here or in channel.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[CDG][A-Z0-9]{8,}$" },
+      "default": []
+    },
     "user": {
       "title": "Your Slack member ID",
       "description": "Only messages written by this user are read. Slack profile → ⋮ → Copy member ID.",
@@ -26,12 +33,37 @@
       "type": "string",
       "default": ""
     },
+    "trigger": {
+      "title": "Trigger",
+      "description": "Messages starting with this go to the agents, e.g. ! or :zap:. Write <trigger><name> to talk to one.",
+      "type": "string",
+      "pattern": "^\\S+$",
+      "default": "!"
+    },
     "icon": {
-      "title": "Post icon",
-      "description": "Emoji in front of every agent post.",
+      "title": "Default icon",
+      "description": "Emoji in front of agent posts, unless the dispatcher or workers set their own.",
       "type": "string",
       "minLength": 1,
       "default": ":robot_face:"
+    },
+    "reply_in_thread": {
+      "title": "Answer in a thread",
+      "description": "Answer a message written in the channel in a thread under it. Off answers in the channel.",
+      "type": "boolean",
+      "default": true
+    },
+    "thinking": {
+      "title": "While thinking",
+      "description": "Posted as soon as the dispatcher gets your message, then replaced by its answer, e.g. :loading-2:. Empty posts nothing until the answer.",
+      "type": "string",
+      "default": ":hourglass_flowing_sand: thinking…"
+    },
+    "show_label": {
+      "title": "Show name tag",
+      "description": "Put [name] after the icon in each post.",
+      "type": "boolean",
+      "default": true
     },
     "slack": {
       "title": "Slack login",
@@ -67,15 +99,21 @@
     },
     "dispatcher": {
       "title": "Dispatcher",
-      "description": "Answers @bot messages in a fresh session each time and starts workers.",
+      "description": "Answers trigger messages in a fresh session each time and starts workers.",
       "type": "object",
       "properties": {
         "label": {
           "title": "Name",
-          "description": "Write @bot <name>, or just @bot.",
+          "description": "Write <trigger><name>, or just the trigger.",
           "type": "string",
           "pattern": "^[a-z0-9_-]+$",
           "default": "boss"
+        },
+        "icon": {
+          "title": "Icon",
+          "description": "Emoji in front of its posts. Empty uses the default icon.",
+          "type": "string",
+          "default": ""
         },
         "runner": {
           "title": "Agent CLI",
@@ -83,11 +121,15 @@
           "enum": ["opencode", "claude", "pi"],
           "default": "opencode"
         },
-        "model": {
-          "title": "Model",
-          "description": "In the runner's own format, e.g. github-copilot/claude-haiku-5.5 for opencode. Empty uses the runner's default.",
-          "type": "string",
-          "default": ""
+        "models": {
+          "title": "Model per runner",
+          "description": "The one for dispatcher.runner is used, in that runner's own format, e.g. github-copilot/claude-haiku-5.5 for opencode. Empty uses the runner's own default model.",
+          "type": "object",
+          "properties": {
+            "opencode": { "type": "string", "default": "" },
+            "claude": { "type": "string", "default": "haiku" },
+            "pi": { "type": "string", "default": "" }
+          }
         },
         "workdir": {
           "title": "Working folder",
@@ -122,6 +164,12 @@
           "enum": ["opencode", "claude", "pi"],
           "default": "opencode"
         },
+        "icon": {
+          "title": "Icon",
+          "description": "Emoji in front of worker posts. Empty uses the default icon.",
+          "type": "string",
+          "default": ""
+        },
         "models": {
           "title": "Model per runner",
           "description": "Empty uses the runner's default.",
@@ -138,6 +186,32 @@
           "default": false
         }
       }
+    },
+    "connectors": {
+      "title": "Connectors",
+      "description": "Tools the agents reach through their own CLIs. `slack-relay connectors` runs each check with bash -o pipefail: exit 0 means signed in, and the first line it prints is shown. An empty check turns a connector off.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9_-]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "title": { "title": "Name", "type": "string" },
+          "check": { "title": "Check command", "description": "Must not print secrets.", "type": "string" }
+        }
+      },
+      "default": {
+        "github": {"title": "GitHub", "check": "gh auth status --active 2>&1 | grep -m1 -E 'Logged in|Failed|not logged'"},
+        "jira": {"title": "Jira", "check": "acli jira auth status 2>&1 | grep -m1 -E 'Email|Site|Error'"},
+        "datadog": {"title": "Datadog", "check": "pup auth status 2>/dev/null | jq -er 'select(.authenticated) | \"signed in, token until \\(.expires_at)\"'"},
+        "grafana": {"title": "Grafana", "check": "gcx api /api/user --jq '.login'"},
+        "clickhouse": {"title": "ClickHouse", "check": "gcx datasources list --jq '[.datasources[] | select(.type | test(\"clickhouse\"))] | if length > 0 then \"\\(length) datasources via Grafana\" else error(\"no ClickHouse datasource in Grafana\") end'"}
+      }
+    },
+    "claude_settings": {
+      "title": "Extra Claude Code settings",
+      "description": "Passed with --settings to every claude the relay starts. Use it to let commands through a managed sandbox, e.g. {\"sandbox\": {\"excludedCommands\": [\"acli *\"]}}.",
+      "type": "object",
+      "default": {}
     },
     "repos": {
       "title": "Repos",
