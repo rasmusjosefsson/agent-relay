@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `!boss stop` ends a dispatcher answer that is taking too long, agent included, and turns its thinking post into "Stopped." `!client stop` does the same for a worker, which keeps its session for `!client …`. The dispatcher now answers in the background, so `serve` keeps reading while it works and a second `!boss …` no longer waits for the first.
+
 - The app's General pane no longer saves each setting as you type. Changed settings get a dot, a bar at the bottom says how many are unsaved, and Save (⌘S) or Revert applies them together. After saving, the same bar says whether the relay is using them or needs a restart, with the Restart button right there.
 - The app shows each saved channel's Slack name under the Channels field, from the new `slack-relay channels --json`. It only asks Slack about channels in the config.
 - The dispatcher posts `thinking` (`:hourglass_flowing_sand: thinking…` by default, or your own emoji like `:loading-2:`) as soon as your message arrives, then edits it into the answer, so a slow answer no longer looks like nothing happened.

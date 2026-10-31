@@ -42,6 +42,12 @@ if [[ $last_line == *"opencode-fails"* ]]; then
   jq -nc '{type: "error", error: {type: "unknown", message: "Invalid model reference: haiku"}}'
   exit 1
 fi
+if [[ $last_line == *"take your time"* ]]; then
+  echo $$ >"$SLACK_FAKE_DIR/slow.pid"
+  sleep 30
+  jq -nc '{type: "text", part: {text: "too late"}}'
+  exit 0
+fi
 if [[ $last_line == *"spawn it"* ]]; then
   t=$'On it.\nSPAWN {"repo": "client", "task": "from dispatcher", "runner": "pi", "name": "disp"}\nSPAWN {"repo": "nope", "task": "x"}'
   jq -nc --arg t "$t" '{type: "text", part: {text: $t}}'
@@ -514,6 +520,46 @@ grep -Fxq "id:C0000000001${tab}:crown: fake-pi: Message from Rasmus: after reloa
 kill "$serve_pid"; wait "$serve_pid" 2>/dev/null || true
 rm -f "$WORK/state/serve.json"
 mv "$WORK/config.bak" "$WORK/config.json"
+
+# "!mac stop" ends a slow dispatcher turn and its agent while serve keeps polling, and edits its placeholder
+rm -f "$WORK/sent.tsv" "$WORK/updates.tsv" "$WORK/slow.pid"
+history "1700000401.000000${tab}id:C0000000001${tab}$ME${tab}!mac take your time"
+SLACK_RELAY_INTERVAL=0.2 SLACK_RELAY_SINCE=1700000400.000000 "$relay" serve 2>"$WORK/stop.log" &
+serve_pid=$!
+for i in $(seq 1 50); do [[ -s "$WORK/slow.pid" ]] && jq -e '.busy.text == "take your time"' "$WORK/state/serve.json" >/dev/null 2>&1 && break; sleep 0.1; done
+jq -e '.busy == {label: "mac", text: "take your time", since: .busy.since}' "$WORK/state/serve.json" >/dev/null \
+  || fail "serve.json busy during a dispatcher turn: $(cat "$WORK/state/serve.json") $(cat "$WORK/stop.log")"
+agent=$(cat "$WORK/slow.pid")
+history "1700000402.000000${tab}id:C0000000001${tab}$ME${tab}!mac stop" "1700000401.000000${tab}id:C0000000001${tab}$ME${tab}!mac take your time"
+for i in $(seq 1 50); do grep -Fq "Stopped 1 request." "$WORK/sent.tsv" 2>/dev/null && break; sleep 0.1; done
+grep -Fq "[mac] Stopped 1 request." "$WORK/sent.tsv" || fail "stop not confirmed: $(sent) $(cat "$WORK/stop.log")"
+grep -Fq "[mac] Stopped." "$WORK/updates.tsv" || fail "stop did not edit the thinking post: $(cat "$WORK/updates.tsv" 2>/dev/null)"
+for i in $(seq 1 20); do kill -0 "$agent" 2>/dev/null || break; sleep 0.1; done
+! kill -0 "$agent" 2>/dev/null || fail "stop left the dispatcher's agent running"
+for i in $(seq 1 20); do jq -e '.busy == null' "$WORK/state/serve.json" >/dev/null 2>&1 && break; sleep 0.1; done
+jq -e '.busy == null' "$WORK/state/serve.json" >/dev/null || fail "busy after stop: $(cat "$WORK/state/serve.json")"
+kill "$serve_pid"; wait "$serve_pid" 2>/dev/null || true
+[[ "$(sent)" != *"too late"* && "$(sent)" != *"error"* ]] || fail "a stopped turn still posted: $(sent)"
+rm -f "$WORK/state/serve.json" "$WORK/sent.tsv"
+history "1700000404.000000${tab}id:C0000000001${tab}$ME${tab}!mac stop the flaky retries" "1700000403.000000${tab}id:C0000000001${tab}$ME${tab}!mac STOP!"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000402.000000 "$relay" serve 2>/dev/null
+grep -Fq "[mac] Nothing to stop." "$WORK/sent.tsv" || fail "stop with nothing running: $(sent)"
+grep -Fq "Message from Rasmus: stop the flaky retries" "$WORK/sent.tsv" || fail "a message starting with stop did not reach the dispatcher: $(sent)"
+
+# "!<worker> stop" ends a working worker and keeps it, so it can be picked up again
+rm -f "$WORK/sent.tsv" "$WORK/slow.pid"
+"$relay" spawn client "take your time" --name slowpoke >/dev/null
+for i in $(seq 1 50); do [[ -s "$WORK/slow.pid" ]] && break; sleep 0.1; done
+agent=$(cat "$WORK/slow.pid")
+history "1700000405.000000${tab}id:C0000000001${tab}$ME${tab}!slowpoke stop"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000404.000000 "$relay" serve 2>/dev/null
+for i in $(seq 1 20); do kill -0 "$agent" 2>/dev/null || break; sleep 0.1; done
+! kill -0 "$agent" 2>/dev/null || fail "stop left the worker's agent running"
+jq -e '.status == "stopped"' "$WORK/state/workers/slowpoke.json" >/dev/null || fail "worker status after stop: $("$relay" status)"
+grep -Fq "[slowpoke] Stopped. Write !slowpoke … to pick it up again." "$WORK/sent.tsv" || fail "worker stop not confirmed: $(sent)"
+sleep 0.3
+[[ "$(sent)" != *"too late"* && "$(sent)" != *"error"* ]] || fail "a stopped worker still posted: $(sent)"
+"$relay" remove slowpoke >/dev/null
 
 # the Slack token must belong to the configured user
 set +e

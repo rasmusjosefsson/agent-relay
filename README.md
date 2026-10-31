@@ -54,6 +54,8 @@ slack-relay config set claude_settings '{"sandbox": {"excludedCommands": ["acli 
 | `!boss what's the time?` | The dispatcher (`dispatcher.label`, `boss` by default) answers, in a fresh session. |
 | `!boss fix the flaky test in client with claude` | The dispatcher starts worker `client` on Claude Code. |
 | `!client use option 2` | Answers worker `client`'s question, or resumes it once it has finished. |
+| `!boss stop` | Ends every answer the dispatcher is still working on, and its agent. Its thinking post says "Stopped." |
+| `!client stop` | Ends worker `client` and its agent. `!client …` picks it up again in the same session. |
 | `!boss …` in the channel | The answer goes to a thread under your message. Keep talking there; the dispatcher sees your earlier messages in it. |
 | `!boss …` inside a thread | The answer goes to that thread. The dispatcher also sees your earlier messages there. |
 
@@ -90,7 +92,7 @@ Everything an app needs is a file or a JSON command:
 | Memory | `slack-relay memory --json` → `{path, exists, lines, limit, text}`; `memory set` replaces it from stdin |
 | Start and stop | `slack-relay start` runs `serve` in the background, logging to `serve.log`; `slack-relay stop` ends it. A second `serve` exits with "already running". |
 
-Worker `status` is one of `running`, `waiting` (asked you a question), `done`, `failed`, or `died` (process gone without finishing).
+Worker `status` is one of `running`, `waiting` (asked you a question), `done`, `failed`, `stopped` (you wrote `!name stop`), or `died` (process gone without finishing).
 
 ## Mac app
 

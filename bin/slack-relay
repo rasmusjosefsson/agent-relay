@@ -553,7 +553,6 @@ descendants() {
 command_remove() {
   [[ $# -ge 1 ]] || { usage >&2; exit 2; }
   local name file pid status
-  local -a tree
   for name in "$@"; do
     check_label "$name"
     file=$(worker_file "$name")
@@ -561,9 +560,7 @@ command_remove() {
     status=$(worker_status "$name")
     if [[ "$status" == running || "$status" == waiting ]]; then
       pid=$(jq -r '.pid' "$file")
-      # the worker first, so it can't post the error its killed agent returns
-      mapfile -t tree < <(descendants "$pid")
-      kill -TERM "$pid" "${tree[@]}" 2>/dev/null || true
+      kill_tree "$pid"
       echo "stopped $name (pid $pid)"
     fi
     rm -f "$file" "$STATE/workers/$name.log"
@@ -603,9 +600,17 @@ dispatch() {
   model=$(cfg "$DISPATCHER_MODEL")
   auto=$(cfg .dispatcher.auto)
   memory=$(cat "$workdir/MEMORY.md")
+  # serve runs each turn in the background; this file lets "stop" end it and edit its placeholder
+  local turn="$STATE/dispatch/$BASHPID.json"
+  mkdir -p "$STATE/dispatch"
+  jq -n --argjson pid "$BASHPID" --arg c "$id" --arg t "$thread" --arg x "$text" --arg s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{pid: $pid, channel: $c, thread: $t, placeholder: "", text: $x, since: $s}' >"$turn"
   # shows at once that the message arrived; the answer replaces it
   placeholder=""
   [[ -z "$(cfg .thinking)" ]] || placeholder=$(post "$id" "$label" "$(cfg .thinking)" 2>/dev/null) || placeholder=""
+  if [[ -n "$placeholder" ]]; then
+    jq --arg p "$placeholder" '.placeholder = $p' "$turn" >"$turn.tmp" && mv "$turn.tmp" "$turn"
+  fi
   answer=$(run_agent "$runner" "$workdir" "" false "$model" "$auto" "slack: $label" "$(cat <<EOF
 You are "$label", $OWNER's assistant on their Mac. They write from Slack on their phone. Every message starts a fresh session, so MEMORY.md is all you remember.
 - Answer whatever they ask directly and in a few lines, like any good assistant: general knowledge, a word, a joke, a quick lookup. Read words in their plain everyday meaning; only treat one as a repo, worker, or ticket when it clearly is one. Don't ask what they meant when a sensible reading exists.
@@ -635,6 +640,43 @@ EOF
   answer=$(grep -v '^SPAWN {' <<<"$answer" || true)
   answer="${answer:+$answer$'\n'}${started#$'\n'}"
   post "$id" "$label" "$(clip "${answer:-(finished with no text reply)}")" "$placeholder" >/dev/null
+  rm -f "$turn"
+}
+
+# Dispatcher turns still running, as JSON lines; files of turns that are gone are deleted.
+dispatch_turns() {
+  local file
+  shopt -s nullglob
+  for file in "$STATE"/dispatch/*.json; do
+    if kill -0 "$(jq -r '.pid // 0' "$file")" 2>/dev/null; then jq -c . "$file"; else rm -f "$file"; fi
+  done
+}
+
+is_stop() { [[ "${1,,}" =~ ^stop[.!]*$ ]]; }
+
+# Ends a process and everything it started, the process first so it can't post its killed child's error.
+kill_tree() {
+  local -a tree
+  mapfile -t tree < <(descendants "$1")
+  kill -TERM "$1" "${tree[@]}" 2>/dev/null || true
+}
+
+# "!<dispatcher> stop": ends every running dispatcher turn and turns its placeholder into "Stopped."
+stop_dispatches() {
+  local id=$1 label=$2 turn n=0
+  while IFS= read -r turn; do
+    kill_tree "$(jq -r .pid <<<"$turn")"
+    rm -f "$STATE/dispatch/$(jq -r .pid <<<"$turn").json"
+    SLACK_RELAY_THREAD=$(jq -r .thread <<<"$turn") \
+      post "$(jq -r .channel <<<"$turn")" "$label" "Stopped." "$(jq -r .placeholder <<<"$turn")" >/dev/null || true
+    n=$((n + 1))
+    echo "[$(date +%T)] [$label] stopped: $(jq -r .text <<<"$turn")" >&2
+  done < <(dispatch_turns)
+  if (( n )); then
+    post "$id" "$label" "Stopped $n request$( (( n == 1 )) || echo s)." >/dev/null
+  else
+    post "$id" "$label" "Nothing to stop." >/dev/null
+  fi
 }
 
 # Starts a worker for one SPAWN line from the dispatcher; serve runs it so the agent's own sandbox doesn't matter.
@@ -658,11 +700,23 @@ route() {
   if [[ "$name" == "$dispatcher" ]]; then
     [[ -n "$text" ]] || return 0
     echo "[$(date +%T)] [$name] in: $text" >&2
-    dispatch "$id" "$name" "$ts" "$text"
+    if is_stop "$text"; then
+      stop_dispatches "$id" "$name"
+    else
+      # in the background, so serve keeps reading and "stop" can reach a slow turn
+      dispatch "$id" "$name" "$ts" "$text" &
+    fi
     return
   fi
   label=$name
   status=$(worker_status "$label")
+  if [[ ( "$status" == running || "$status" == waiting ) ]] && is_stop "$text"; then
+    kill_tree "$(jq -r '.pid' "$(worker_file "$label")")"
+    set_state "$label" --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.status = "stopped" | .finished = $t'
+    echo "[$(date +%T)] [$label] stopped" >&2
+    post "$id" "$label" "Stopped. Write $TRIGGER$label … to pick it up again." >/dev/null
+    return
+  fi
   case "$status" in
     waiting)
       ;;
@@ -748,13 +802,13 @@ command_serve() {
         # a message in the channel gets its answer in a thread under it
         [[ "$thread" != - || "$(config_json | jq .reply_in_thread)" == false ]] || thread=$ts
         export SLACK_RELAY_THREAD=$thread
-        # busy tells an app what serve is handling while the dispatcher runs
-        serve_update --arg l "$label" --arg t "$text" --arg s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.busy = {label: $l, text: $t, since: $s}'
         route "$id" "$dispatcher" "$ts" "$label" "$text"
-        serve_update '.busy = null'
       done < <(messages_after "$id" "${since[$id]}")
     done
-    serve_update --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_poll = $t'
+    [[ "${SLACK_RELAY_ONCE:-0}" != 1 ]] || wait
+    # busy tells an app what the dispatcher is working on, the newest turn when there are several
+    serve_update --arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg l "$dispatcher" --argjson b "$(dispatch_turns | jq -sc 'max_by(.since)')" \
+      '.last_poll = $t | .busy = ($b | if . then {label: $l, text, since} else null end)'
     [[ "${SLACK_RELAY_ONCE:-0}" != 1 ]] || break
     sleep "$INTERVAL"
   done
