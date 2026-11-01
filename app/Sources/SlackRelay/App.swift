@@ -29,20 +29,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var window: NSWindow?
     private let nav = Navigation()
     private lazy var store = Store(cli: ShellCLI.locate())
+    private var statusItem: StatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.menu()
+        store.startPolling()
+        statusItem = StatusItem(store: store) { [weak self] in self?.showWindow() }
+        showWindow()
+    }
+
+    /// The menu bar icon stays after the window closes, so the relay can be off and still have a place in the bar.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showWindow() }
+        return true
+    }
+
+    private func showWindow() {
+        let window = self.window ?? makeWindow()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { MainWindow.pinSidebar(in: window) }
+    }
+
+    private func makeWindow() -> NSWindow {
         let window = MainWindow.make(root: MainWindowView(nav: nav, store: store))
         window.title = nav.selected.rawValue
         window.setFrameAutosaveName("SlackRelayMain")
         window.delegate = self
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async { MainWindow.pinSidebar(in: window) }
         withObservationTracking { _ = nav.selected } onChange: { [weak self] in
             Task { @MainActor in self?.trackTitle() }
         }
         self.window = window
+        return window
     }
 
     private func trackTitle() {
@@ -56,8 +76,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         MainWindow.pinSidebar(in: window)
         Task { await store.refreshStatus() }
     }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     private static func menu() -> NSMenu {
         let main = NSMenu()

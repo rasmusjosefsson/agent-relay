@@ -218,8 +218,8 @@ struct MainWindowView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 860, minHeight: 560)
         .task {
-            store.startPolling()
-            // Connector badges should show without opening the pane
+            // Connector badges should show without opening the pane. Status polling starts with the
+            // menu bar icon, so it keeps going after this window closes.
             if store.connectors == nil { await store.checkConnectors() }
             if store.fields == nil { await store.loadFields() }
         }

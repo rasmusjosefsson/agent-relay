@@ -96,7 +96,7 @@ Worker `status` is one of `running`, `waiting` (asked you a question), `done`, `
 
 ## Mac app
 
-[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Workers, Connectors (Slack included), `MEMORY.md`, and `doctor` each have a pane. It needs macOS 14 and Xcode.
+[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Workers, Connectors (Slack included), `MEMORY.md`, and `doctor` each have a pane. While the app is open it keeps a menu bar icon: radio waves while the relay is listening, the same mark with a slash while it is stopped. Closing the window leaves the icon; Quit removes it. It needs macOS 14 and Xcode.
 
 ```bash
 app/scripts/bundle.sh   # builds Slack Relay.app into /Applications, reopening it if it was running
