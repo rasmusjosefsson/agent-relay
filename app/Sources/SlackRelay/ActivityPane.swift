@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension String {
+    /// A model's answer with its inline Markdown (**bold**, `code`, links) rendered; the plain text if it doesn't parse.
+    var markdown: AttributedString {
+        (try? AttributedString(markdown: self, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(self)
+    }
+}
+
 extension Run {
     var statusColor: Color {
         switch status {
@@ -100,6 +107,10 @@ struct RunCard: View {
                               : "End this worker's turn; \(store.trigger)\(run.label) … picks it up again in the same session")
                 }
             }
+            if showOrigin && !run.context.isEmpty {
+                ThreadContext(lines: run.context)
+                    .padding(.leading, 20)
+            }
             if !run.text.isEmpty {
                 Text(run.text)
                     .foregroundStyle(.secondary)
@@ -126,7 +137,7 @@ struct RunCard: View {
                 }
                 .padding(.leading, 20)
             } else if !run.isActive && !expanded, let answer = run.answer, !answer.isEmpty {
-                Text(answer)
+                Text(answer.markdown)
                     .font(.callout)
                     .lineLimit(2)
                     .padding(.leading, 20)
@@ -167,6 +178,9 @@ struct ThreadCard<Card: View>: View {
                 }
             }
             Origin(store: store, run: newest, showLink: false)
+            if let context = conversation.runs.first?.context, !context.isEmpty {
+                ThreadContext(lines: context)
+            }
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(conversation.runs) { run in card(run) }
             }
@@ -176,6 +190,42 @@ struct ThreadCard<Card: View>: View {
             }
         }
         .padding(.vertical, 3)
+    }
+}
+
+/// The messages above a question in its Slack thread, so you see what it answered; click one to read all of it.
+struct ThreadContext: View {
+    let lines: [ContextLine]
+    @State private var open = Set<Int>()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: line.from == "bot" ? "bolt.fill" : line.from == "other" ? "person" : "person.fill")
+                        .foregroundStyle(line.from == "bot" ? Color.orange : Color.secondary)
+                        .frame(width: 14)
+                        .help(line.from == "bot" ? "A bot or app posted this" : line.from == "other" ? "Someone else wrote this" : "You or your agent")
+                    Text(Self.plain(line.text))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(open.contains(i) ? nil : 2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { if open.contains(i) { open.remove(i) } else { open.insert(i) } }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.04)))
+    }
+
+    /// Slack's <url|label> and <url> as just the label or the url
+    static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: #"<([^|>]+)\|([^>]+)>"#, with: "$2", options: .regularExpression)
+            .replacingOccurrences(of: #"<([^>]+)>"#, with: "$1", options: .regularExpression)
     }
 }
 
@@ -256,7 +306,7 @@ struct ActivityFeed: View {
                     // the reply as posted, unless the agent's own text already shows it
                     if !run.isActive, let answer = run.answer, !answer.isEmpty, rows?.contains(where: { $0.kind == "text" }) != true {
                         Label {
-                            Text(answer).textSelection(.enabled)
+                            Text(answer.markdown).textSelection(.enabled)
                         } icon: {
                             Image(systemName: "paperplane.fill").foregroundStyle(.green)
                         }

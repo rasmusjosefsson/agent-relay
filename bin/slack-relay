@@ -238,11 +238,27 @@ slack_send() {
 
 # Rewrites common Markdown into Slack mrkdwn, so a model's habits don't leak into posts,
 # and links every Jira key of a configured project that is not already inside a link.
+# Slack shows no tables, so each table row becomes a bullet: "• *first cell*: other · cells".
 slackify() {
   local jira projects
   jira=$(cfg .jira_url)
   projects=$(config_json | jq -r '(.jira_projects // []) | map(select(test("^[A-Z][A-Z0-9]+$"))) | join("|")' 2>/dev/null || true)
-  sed -E \
+  awk '
+    function cells(line,   n, a, i, out) {
+      sub(/^[ \t]*\|/, "", line); sub(/\|[ \t]*$/, "", line)
+      n = split(line, a, /[ \t]*\|[ \t]*/)
+      for (i = 1; i <= n; i++) { gsub(/^[ \t]+|[ \t]+$/, "", a[i]); if (a[i] == "") continue
+        if (out == "") { gsub(/\*+/, "", a[i]); out = "• *" a[i] "*"; continue }
+        out = out (out ~ /\*$/ ? ": " : " · ") a[i] }
+      return out
+    }
+    /^```/ { fence = !fence }
+    !fence && /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/ && held != "" { held = ""; table = 1; next }
+    { if (held != "") print held; held = "" }
+    !fence && /^[ \t]*\|.*\|[ \t]*$/ { if (table) print cells($0); else held = $0; next }
+    { table = 0; print }
+    END { if (held != "") print held }
+  ' | sed -E \
     -e 's/\*\*([^*]+)\*\*/*\1*/g' \
     -e 's/\[([^]]+)\]\((https?:[^)]+)\)/<\2|\1>/g' \
     -e 's/^#{1,6}[[:space:]]+(.*)$/*\1*/' \
@@ -557,8 +573,9 @@ start_worker() {
 link_rule() {
   local jira
   jira=$(cfg .jira_url)
-  printf '%s\n%s' "- Link everything you mention, so they can tap it on their phone: CircleCI jobs and pipelines (their https://app.circleci.com/pipelines/... URL), GitHub PRs, commits and files, dashboards. Write each link as a Slack link with a short label, never a bare URL: <https://github.com/org/repo/pull/12|PR #12>, <https://app.circleci.com/pipelines/...|library-check job>.${jira:+ Write Jira keys plainly (ADE-123), once, without a link: the relay links them.}" \
-    "- Format for Slack: *bold*, _italic_, \`code\`, plain - bullets. Slack does not render **double asterisks**, # headings, or tables. Never mention these formatting rules in your answer."
+  printf '%s\n%s\n%s' "- Link everything you mention, so they can tap it on their phone: CircleCI jobs and pipelines (their https://app.circleci.com/pipelines/... URL), GitHub PRs, commits and files, dashboards. Write each link as a Slack link with a short label, never a bare URL: <https://github.com/org/repo/pull/12|PR #12>, <https://app.circleci.com/pipelines/...|library-check job>.${jira:+ Write Jira keys plainly (ADE-123), once, without a link: the relay links them.}" \
+    "- Format for Slack: *bold*, _italic_, \`code\`, plain - bullets. Slack does not render **double asterisks**, # headings, or tables. Never mention these formatting rules in your answer." \
+    "- They read on their phone and can't open files on this Mac: never point them to a local path, read it yourself and give what matters. Lead with the cause or the answer, then at most a few short bullets."
   sandbox_rule
 }
 
@@ -698,8 +715,12 @@ dispatch() {
   export SLACK_RELAY_EVENTS="$STATE/dispatch/$turn_id.events"
   : >"$SLACK_RELAY_EVENTS"
   jq -n --arg id "$turn_id" --arg l "$label" --argjson pid "$BASHPID" --arg c "$id" --arg t "$thread" --arg x "$text" \
-    --arg s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg r "$runner" --arg m "$model" --arg ts "$ts" --arg d "$workdir" \
-    '{id: $id, label: $l, pid: $pid, channel: $c, thread: $t, ts: $ts, placeholder: "", text: $x, since: $s, runner: $r, model: $m, dir: $d, status: "running"}' >"$turn"
+    --arg s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg r "$runner" --arg m "$model" --arg ts "$ts" --arg d "$workdir" --arg ctx "$thread_context" \
+    '{id: $id, label: $l, pid: $pid, channel: $c, thread: $t, ts: $ts, placeholder: "", text: $x, since: $s, runner: $r, model: $m, dir: $d, status: "running",
+      context: ($ctx | split("\n") | map(sub("^…"; "") | select(startswith("- ")) | .[2:]
+        | if startswith("(a bot posted) ") then {from: "bot", text: .[15:]}
+          elif startswith("(someone else wrote) ") then {from: "other", text: .[21:]}
+          else {from: "you", text: .} end))}' >"$turn"
   # shows at once that the message arrived; the answer replaces it
   placeholder=""
   [[ -z "$(cfg .thinking)" ]] || placeholder=$(post "$id" "$label" "$(cfg .thinking)" 2>/dev/null) || placeholder=""

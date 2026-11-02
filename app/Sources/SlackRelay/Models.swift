@@ -89,8 +89,16 @@ struct Turn: Decodable, Equatable, Identifiable {
     /// The Slack message that asked
     var ts: String?
     var dir: String?
+    /// Earlier messages in its thread, oldest first, as the dispatcher saw them
+    var context: [ContextLine]?
 
     var isActive: Bool { status == "running" }
+}
+
+/// One earlier message in a thread: from you (agent posts included), a bot, or someone else.
+struct ContextLine: Decodable, Equatable, Hashable {
+    var from: String
+    var text: String
 }
 
 /// One step from `slack-relay activity --json`.
@@ -140,6 +148,8 @@ struct Run: Identifiable, Equatable {
     var thread: String?
     var ts: String?
     var dir: String?
+    /// Earlier messages in its Slack thread; empty for workers and channel messages
+    var context: [ContextLine] = []
 
     var isActive: Bool { status == "running" || status == "waiting" }
 
@@ -175,6 +185,7 @@ struct Run: Identifiable, Equatable {
         thread = turn.thread
         ts = turn.ts
         dir = turn.dir
+        context = turn.context ?? []
     }
 
     init(worker: Worker) {
