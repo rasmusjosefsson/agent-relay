@@ -181,6 +181,14 @@ SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000021.500000 "$relay" serve 2>/dev/nul
 grep -Fq -- "--agent slim" "$WORK/opencode-args.log" || fail "local model did not get local_agent: $(cat "$WORK/opencode-args.log")"
 jq '.dispatcher.models.opencode = "cheap/model"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 
+# speed: every answer is timed, per runner, model and agent
+speed=$("$relay" speed --json)
+[[ $(jq -r '[.[] | select(.model == "ollama/small" and .agent == "slim")][0] | "\(.answers) \(.median | type)"' <<<"$speed") == "1 number" ]] \
+  || fail "speed lacks the local answer: $speed"
+[[ $(jq -r '[.[] | select(.model == "cheap/model" and .agent == "")][0].answers' <<<"$speed") -ge 1 ]] || fail "speed lacks the cheap answer: $speed"
+"$relay" status --json | jq -e '[.turns[] | select(.secs | type == "number")] | length >= 2' >/dev/null || fail "turns lack secs"
+"$relay" speed | head -1 | grep -q "median" || fail "speed table: $("$relay" speed)"
+
 # spawn: worker runs in the repo with its own session and posts its result
 rm -f "$WORK/sent.tsv" "$WORK/opencode-args.log"
 out=$("$relay" spawn client "fix the flaky test")

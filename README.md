@@ -90,6 +90,7 @@ Everything an app needs is a file or a JSON command:
 | Connectors | `slack-relay connectors --json [name…]` → `[{name, title, check, ok, detail}]`; `ok` is null when off, and no token is shown. The first row is Slack itself (`builtin: true`): the token's owner and whether every channel is readable |
 | Channel names | `slack-relay channels --json` → `[{id, name}]` for the configured channels; `name` is null when Slack won't say |
 | Models | `slack-relay models --json [runner…]` → `{runner: [model]}` from each agent CLI's own list; Claude has none, so it gets `haiku`, `sonnet`, `opus` |
+| Speed | `slack-relay speed --json` → `[{runner, model, agent, answers, median, p90, slowest, last}]`, seconds per dispatcher answer from message to reply, newest first. Every answer adds a line to `speed.jsonl` in the state folder, and its turn in `status --json` gets `secs` |
 | Remove a worker | `slack-relay remove <worker>…` stops it and its child processes if it runs, then deletes its record and log, so `!name` no longer resumes it |
 | Memory | `slack-relay memory --json` → `{path, exists, lines, limit, text}`; `memory set` replaces it from stdin |
 | Start and stop | `slack-relay start` runs `serve` in the background, logging to `serve.log`; `slack-relay stop` ends it. A second `serve` exits with "already running". |

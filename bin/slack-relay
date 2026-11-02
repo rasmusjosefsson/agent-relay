@@ -29,6 +29,7 @@ Usage:
   slack-relay status   [--json]
   slack-relay agents   [--json]
   slack-relay models   [--json] [opencode|claude|pi...]
+  slack-relay speed    [--json]   (how long dispatcher answers take, per runner, model and agent)
   slack-relay connectors [--json] [NAME...]
   slack-relay channels [--json]
   slack-relay memory   [show | path | --json | set]   (set reads stdin)
@@ -44,7 +45,7 @@ Usage:
 Config: ~/.config/slack-relay/config.json (SLACK_RELAY_CONFIG). Every key and its
 default is described in config.schema.json; keys use dots: dispatcher.models.claude.
 State: ~/.local/state/slack-relay (SLACK_RELAY_STATE): serve.json, serve.log,
-workers/<name>.json, .log and .events, and dispatch/<turn>.json and .events.
+workers/<name>.json, .log and .events, dispatch/<turn>.json and .events, and speed.jsonl.
 
 Agent posts are prefixed "<icon> [label]". Messages count only when written by
 the configured user and starting with the trigger, "!" by default (or "@bot"). ask/wait print the reply text and
@@ -728,8 +729,13 @@ EOF
   answer="${answer:+$answer$'\n'}${started#$'\n'}"
   answer=$(clip "${answer:-(finished with no text reply)}")
   post "$id" "$label" "$answer" "$placeholder" >/dev/null
-  set_turn "$turn_id" --arg s "$status" --arg a "$answer" --arg f "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.status = $s | .answer = $a | .finished = $f'
+  local secs=$(( $(date +%s) - ${turn_id%%-*} )) finished
+  finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  set_turn "$turn_id" --arg s "$status" --arg a "$answer" --arg f "$finished" --argjson n "$secs" \
+    '.status = $s | .answer = $a | .finished = $f | .secs = $n'
+  # one line per answer, kept when old turns are deleted, for `slack-relay speed`
+  jq -nc --arg f "$finished" --arg r "$runner" --arg m "$model" --arg a "$agent" --argjson n "$secs" --arg s "$status" \
+    '{finished: $f, runner: $r, model: $m, agent: $a, secs: $n, status: $s}' >>"$STATE/speed.jsonl"
 }
 
 turn_file() { printf '%s/dispatch/%s.json' "$STATE" "$1"; }
@@ -1329,6 +1335,24 @@ command_models() {
   if [[ "$json" == true ]]; then jq . <<<"$rows"; else jq -r 'to_entries[] | .key as $r | .value[] | "\($r)\t\(.)"' <<<"$rows"; fi
 }
 
+# How long dispatcher answers take, per runner, model and agent, from speed.jsonl.
+command_speed() {
+  local json=false log="$STATE/speed.jsonl" rows='[]'
+  [[ "${1:-}" != --json ]] || json=true
+  [[ ! -s "$log" ]] || rows=$(jq -sc '
+    def pct(p): sort | .[((length - 1) * p | floor)];
+    map(select(.status == "done")) | group_by([.runner, .model, .agent])
+    | map({runner: .[0].runner, model: .[0].model, agent: .[0].agent, answers: length,
+           median: (map(.secs) | pct(0.5)), p90: (map(.secs) | pct(0.9)), slowest: (map(.secs) | max),
+           last: (map(.finished) | max)})
+    | sort_by(.last) | reverse' "$log")
+  if [[ "$json" == true ]]; then jq . <<<"$rows"; return; fi
+  [[ "$rows" != '[]' ]] || { echo "No answers timed yet."; return; }
+  jq -r '(["answers", "median", "p90", "slowest", "runner", "model", "agent"] | @tsv),
+    (.[] | [.answers, "\(.median)s", "\(.p90)s", "\(.slowest)s", .runner, (.model | if . == "" then "(default)" else . end), .agent] | @tsv)' <<<"$rows" \
+    | column -t -s $'\t'
+}
+
 # First useful line a check printed, without anything that looks like a token.
 connector_detail() {
   local out=$1 err=$2 line
@@ -1499,6 +1523,7 @@ case ${1:-} in
   status) shift; if [[ "${1:-}" == --json ]]; then command_status_json; else command_status "$@"; fi ;;
   agents) shift; command_agents "$@" ;;
   models) shift; command_models "$@" ;;
+  speed) shift; command_speed "$@" ;;
   connectors) shift; command_connectors "$@" ;;
   channels) shift; command_channels "$@" ;;
   memory) shift; command_memory "$@" ;;
