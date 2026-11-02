@@ -991,7 +991,8 @@ serve_json() {
   local file="$STATE/serve.json" pid
   [[ -f "$file" ]] || { echo '{"running": false}'; return; }
   pid=$(jq -r '.pid // 0' "$file")
-  if kill -0 "$pid" 2>/dev/null; then
+  # a serve that died without cleanup leaves its pid behind, and macOS reuses pids
+  if kill -0 "$pid" 2>/dev/null && [[ "$(ps -o command= -p "$pid" 2>/dev/null)" == *slack-relay*serve* ]]; then
     jq -c '. + {running: true}' "$file"
   else
     jq -c '. + {running: false}' "$file"
