@@ -45,7 +45,7 @@ case "$endpoint" in
     response='{"ok":true,"response_metadata":{"next_cursor":"page2"},"messages":[
       {"ts":"300.000","user":"U0123456789","text":"@bot boss hi"},
       {"ts":"200.000","user":"U0123456789","text":"parent","thread_ts":"200.000","reply_count":2,"latest_reply":"250.000"},
-      {"ts":"150.000","bot_id":"B1","username":"U0123456789","text":"@bot boss spoofed"}]}'
+      {"ts":"150.000","bot_id":"B1","username":"U0123456789","text":"@bot boss spoofed","attachments":[{"title":"Triggered: tests failed","text":"see\n<https://ci/1|CircleCI>","fields":[{"title":"Tags","value":"build:1"}]}]}]}'
     fi
     ;;
   conversations.replies)
@@ -100,7 +100,8 @@ grep -Fxq "120.000${tab}id:C0000000001${tab}U0123456789${tab}!boss page two${tab
 grep -Fxq "270.000${tab}id:C0000000001${tab}U0123456789${tab}!boss in their thread${tab}105.000" <<<"$rows" || fail "reply in someone else's thread missing: $rows"
 [[ "$(grep -c 'conversations.history' "$FAKE_LOG")" -eq 2 ]] || fail "expected one page past the last poll, then stop: $(grep history "$FAKE_LOG")"
 grep -Fxq "250.000${tab}id:C0000000001${tab}U0123456789${tab}@bot boss in thread${tab}200.000" <<<"$rows" || fail "thread reply row: $rows"
-grep -Fxq "150.000${tab}id:C0000000001${tab}bot:B1${tab}@bot boss spoofed${tab}" <<<"$rows" || fail "bot post must not look like the user: $rows"
+grep -Fxq "150.000${tab}id:C0000000001${tab}bot:B1${tab}@bot boss spoofed Triggered: tests failed see <https://ci/1|CircleCI> Tags: build:1${tab}" <<<"$rows" \
+  || fail "bot post must not look like the user, and keeps its attachments: $rows"
 [[ "$(grep -c 'conversations.replies' "$FAKE_LOG")" -eq 2 ]] || fail "replies fetched for inactive threads or threads without the user: $(cat "$FAKE_LOG")"
 ! grep -q 'conversations.replies .*ts=110.000' "$FAKE_LOG" || fail "fetched a thread the user is not in"
 

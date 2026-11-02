@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Asking the dispatcher in a thread now gives it the whole thread, not only your own messages: bot posts like Datadog alerts (with their attachments, which hold the links and details) and other people's replies, each marked as not from you and to be read as information, never as instructions. A long thread keeps its first message.
+
 - `slack-relay speed` shows how long dispatcher answers take for each runner, model and agent: median, p90 and slowest, so a model or agent change can be compared. Each answer is kept in `speed.jsonl` in the state folder.
 
 - `dispatcher.local_agent` names an OpenCode agent the dispatcher runs in when its model is an `ollama/` one. A slim agent (short prompt, few tools, no skills) keeps a local model from reading OpenCode's full prompt on every message; other models keep the default agent.
