@@ -94,7 +94,7 @@ private struct ChannelsRow: View {
     private var names: String {
         current.map { id in
             switch store.channelNames[id] {
-            case .some(.some(let name)): "#\(name)"
+            case .some(.some(let name)): name
             case .some(.none): "\(id) (name unknown)"
             case .none: "\(id) (save to see its name)"
             }

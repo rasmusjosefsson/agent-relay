@@ -62,7 +62,14 @@ case "$endpoint" in
     ;;
   chat.postMessage) response='{"ok":true,"ts":"400.000"}' ;;
   chat.update) response='{"ok":true,"ts":"400.000"}' ;;
-  conversations.info) response='{"ok":true,"channel":{"id":"C0000000001","name":"relay-test"}}' ;;
+  conversations.info)
+    if [[ " ${params[*]} " == *" channel=D0000000001 "* ]]; then
+      response='{"ok":true,"channel":{"id":"D0000000001","is_im":true,"user":"U0OTHER001"}}'
+    else
+      response='{"ok":true,"channel":{"id":"C0000000001","name":"relay-test"}}'
+    fi
+    ;;
+  users.info) response='{"ok":true,"user":{"id":"U0OTHER001","name":"other.person","profile":{"display_name":""}}}' ;;
   *) exit 94 ;;
 esac
 printf '%s' "$response" >"$out"
@@ -79,6 +86,9 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ "$("$relay" _slack whoami)" == U0123456789 ]] || fail "whoami"
 [[ "$("$relay" _slack info C0000000001)" == relay-test ]] || fail "channel name"
+jq '.channels = ["D0000000001"]' "$WORK/config.json" >"$WORK/dm.json"
+dm=$(SLACK_RELAY_CONFIG="$WORK/dm.json" "$relay" _slack info D0000000001)
+[[ "$dm" == @other.person ]] || fail "DM name: $dm"
 "$relay" _slack info C0OTHER0001 2>/dev/null && fail "looked up a channel outside the config"
 "$relay" _slack update C0000000001 400.000 "edited"
 grep -Fxq 'POST chat.update channel=C0000000001 ts=400.000 text=edited parse=none' "$FAKE_LOG" || fail "update: $(tail -n 1 "$FAKE_LOG")"

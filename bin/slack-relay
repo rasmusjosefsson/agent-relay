@@ -125,7 +125,7 @@ slackc() {
     update) slack_api POST chat.update "channel=$1" "ts=$2" "text=$3" "parse=none" >/dev/null ;;
     whoami) slack_api GET auth.test | jq -r '.user_id' ;;
     url) slack_api GET auth.test | jq -r '.url // empty' ;;
-    info) slack_api GET conversations.info "channel=$1" | jq -r '.channel.name // empty' ;;
+    info) slack_info "$1" ;;
     *) die "unknown slack action $action" ;;
   esac
 }
@@ -169,6 +169,18 @@ slack_api() {
   rm -rf "$dir"
   echo "slack-relay: Slack $endpoint failed: ${error:-HTTP $status}" >&2
   return 1
+}
+
+# A channel's name, or "@handle" of the person on the other end of a DM, which has no name.
+slack_info() {
+  local info user
+  info=$(slack_api GET conversations.info "channel=$1") || return 1
+  user=$(jq -r 'if .channel.is_im then .channel.user // empty else empty end' <<<"$info")
+  if [[ -z "$user" ]]; then
+    jq -r '.channel.name // empty' <<<"$info"
+    return
+  fi
+  slack_api GET users.info "user=$user" | jq -r '.user | ((.profile.display_name // "") | if . == "" then null else . end) // .name // empty | "@" + .'
 }
 
 slack_rows() {
@@ -1397,7 +1409,7 @@ command_connectors() {
   [[ "$(jq '[.[] | select(.ok == false)] | length' <<<"$rows")" == 0 ]]
 }
 
-# Each configured channel with its Slack name, null when Slack won't tell.
+# Each configured channel with its Slack name ("@handle" for a DM), null when Slack won't tell.
 command_channels() {
   local id name rows='[]'
   while IFS= read -r id; do
@@ -1407,7 +1419,7 @@ command_channels() {
   if [[ "${1:-}" == --json ]]; then
     jq . <<<"$rows"
   else
-    jq -r '.[] | "\(.id)  \(if .name then "#" + .name else "(name unknown)" end)"' <<<"$rows"
+    jq -r '.[] | "\(.id)  \(if .name == null then "(name unknown)" elif .name | startswith("@") then .name else "#" + .name end)"' <<<"$rows"
   fi
 }
 

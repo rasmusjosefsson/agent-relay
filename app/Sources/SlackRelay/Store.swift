@@ -35,7 +35,7 @@ final class Store {
     var restartNeeded = false
     /// Models each agent CLI lists, by runner, for the model fields' menus
     var models: [String: [String]] = [:]
-    /// Slack's name for each saved channel ID, nil when Slack won't tell
+    /// "#name" or "@handle" (DM) for each saved channel ID, nil when Slack won't tell
     var channelNames: [String: String?] = [:]
     /// Error from the last `remove`, by worker
     var workerErrors: [String: String] = [:]
@@ -215,7 +215,7 @@ final class Store {
         if models.isEmpty, let listed = decode([String: [String]].self, await cli.run("models", "--json")) { models = listed }
         fields = decode(ConfigFields.self, await cli.run("config", "fields", "--json"))
         if let rows = decode([ChannelName].self, await names) {
-            channelNames = Dictionary(rows.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+            channelNames = Dictionary(rows.map { ($0.id, $0.label) }, uniquingKeysWith: { first, _ in first })
         }
     }
 

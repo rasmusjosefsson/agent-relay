@@ -233,6 +233,9 @@ struct DoctorCheck: Decodable, Equatable, Identifiable {
 struct ChannelName: Decodable, Equatable {
     var id: String
     var name: String?
+
+    /// "#general", or "@handle" for a DM
+    var label: String? { name.map { $0.hasPrefix("@") ? $0 : "#\($0)" } }
 }
 
 /// `slack-relay config fields --json`
