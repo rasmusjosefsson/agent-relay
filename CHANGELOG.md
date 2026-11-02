@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The Mac app has an Activity pane: every dispatcher answer and worker as it runs, the step its agent is on now (`Bash git status`, `Read src/foo.ts`), a live feed of every step when you open one, and Stop for each. Each shows the channel and thread it came from, with Open in Slack, and the agent, model and folder it runs in. The feed has what the relay sent (command and whole prompt), the agent's session (model, tools, MCP servers), thinking, each tool call with its input and output, its text, and time and cost at the end; click a step to see all of it. Claude keeps its thinking text to itself, so the feed shows only that it is thinking. Two `!boss …` messages at once show as two cards. The menu bar menu lists what is running, with its step and Stop. Finished answers stay listed with their reply, the newest 20.
+- The app no longer stops refreshing after a while: a finished `slack-relay` command could leave it waiting forever.
+- Answers in one Slack thread show as one card in Activity, oldest first.
+- Restarting the relay no longer answers `!` messages in threads a second time. It now reads from the moment it starts, not from the newest message in the channel, which is older than recent thread replies.
+- New `slack-relay activity <worker|turn>` prints what an agent did so far, and `slack-relay cancel <worker|turn>` stops one worker or one dispatcher answer the way `!name stop` does. `status --json` lists the dispatcher's answers as `turns`, each with an ID for these two commands. Claude now runs with `--output-format stream-json` so its steps show while it works.
+
 - The Mac app keeps a menu bar icon while it is open. Radio waves while the relay is listening, the same mark with a slash while it is stopped. Closing the window leaves the icon; Quit removes it. The menu opens the window and can start or stop the relay.
 - `!boss stop` ends a dispatcher answer that is taking too long, agent included, and turns its thinking post into "Stopped." `!client stop` does the same for a worker, which keeps its session for `!client …`. The dispatcher now answers in the background, so `serve` keeps reading while it works and a second `!boss …` no longer waits for the first.
 

@@ -82,8 +82,10 @@ Everything an app needs is a file or a JSON command:
 | Settings as a form | `slack-relay config fields --json` → `{groups, fields: [{key, group, title, description, type, enum, value}]}` in schema order |
 | Edit one setting with validation | `slack-relay config set <key> <value>`, exit 1 with the reason |
 | Health checks | `slack-relay doctor --json` → `[{check, ok, detail}]` |
-| Bridge and workers | `slack-relay status --json` → `{serve: {running, pid, started, last_poll, channel, channels, …}, workers: [{name, status, repo, runner, task, …}]}` |
-| Logs | `~/.local/state/slack-relay/serve.log`, `workers/<name>.log` |
+| Bridge, answers and workers | `slack-relay status --json` → `{serve: {running, pid, started, last_poll, channel, channels, slack_url, …}, turns: [{id, label, status, text, channel, thread, ts, dir, since, finished, answer, last, …}], workers: [{name, status, repo, runner, task, last, …}]}`. `turns` are the dispatcher's answers, running ones and the newest 20 finished; `last` is the agent's newest step while it works |
+| What an agent is doing | `slack-relay activity <worker\|turn> --json` → `[{kind, text, detail}]`, oldest first. `kind` is `relay` (the command, folder and whole prompt the relay ran), `start` (model, tools, MCP servers), `thinking`, `tool` (the tool and its input), `output` (its result), `text`, `error`, or `done` (time, turns, cost). `detail` has the full text where `text` is one short line. Claude and OpenCode report each step as it finishes; Pi only its answer |
+| Stop one | `slack-relay cancel <worker\|turn>…` does what `!name stop` does for a worker, or for one dispatcher answer by its turn ID, and says "Stopped." in Slack |
+| Logs | `~/.local/state/slack-relay/serve.log`, `workers/<name>.log`; each run's raw agent output in `workers/<name>.events` and `dispatch/<turn>.events` |
 | Agent CLIs | `slack-relay agents --json` → `[{name, installed, version, path, dispatcher, default_worker, dispatcher_model, worker_model, active}]` |
 | Connectors | `slack-relay connectors --json [name…]` → `[{name, title, check, ok, detail}]`; `ok` is null when off, and no token is shown. The first row is Slack itself (`builtin: true`): the token's owner and whether every channel is readable |
 | Channel names | `slack-relay channels --json` → `[{id, name}]` for the configured channels; `name` is null when Slack won't say |
@@ -96,7 +98,7 @@ Worker `status` is one of `running`, `waiting` (asked you a question), `done`, `
 
 ## Mac app
 
-[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Workers, Connectors (Slack included), `MEMORY.md`, and `doctor` each have a pane. While the app is open it keeps a menu bar icon: radio waves while the relay is listening, the same mark with a slash while it is stopped. Closing the window leaves the icon; Quit removes it. It needs macOS 14 and Xcode.
+[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Activity lists every dispatcher answer and worker as it runs, with the step its agent is on now, a live feed of every step when you open one, and a Stop button. Workers, Connectors (Slack included), `MEMORY.md`, and `doctor` each have a pane. While the app is open it keeps a menu bar icon: radio waves while the relay is listening, the same mark with a slash while it is stopped. Its menu lists what is running, each with its current step and Stop. Closing the window leaves the icon; Quit removes it. It needs macOS 14 and Xcode.
 
 ```bash
 app/scripts/bundle.sh   # builds Slack Relay.app into /Applications, reopening it if it was running

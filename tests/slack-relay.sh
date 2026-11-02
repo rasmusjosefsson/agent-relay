@@ -13,7 +13,10 @@ cat >"$WORK/bin/slack" <<'FAKE'
 set -euo pipefail
 case $1 in
   history)
-    if [[ -f "$SLACK_FAKE_DIR/history-$2.tsv" ]]; then cat "$SLACK_FAKE_DIR/history-$2.tsv"; else cat "$SLACK_FAKE_DIR/history.tsv"; fi
+    f="$SLACK_FAKE_DIR/history.tsv"
+    [[ ! -f "$SLACK_FAKE_DIR/history-$2.tsv" ]] || f="$SLACK_FAKE_DIR/history-$2.tsv"
+    # with limit 1, only the oldest row: the test files list a thread's parent last, and history has no replies
+    if [[ "${3:-}" == 1 ]]; then tail -n 1 "$f"; else cat "$f"; fi
     ;;
   thread) cat "$SLACK_FAKE_DIR/thread.tsv" ;;
   send)
@@ -27,6 +30,7 @@ case $1 in
     printf '%s\t%s\n' "$3" "$4" >>"$SLACK_FAKE_DIR/updates.tsv"
     ;;
   whoami) echo "$FAKE_WHOAMI" ;;
+  url) echo "https://acme.slack.com/" ;;
   info) [[ "$2" == C0000000001 ]] && echo relay-test || exit 1 ;;
   *) exit 9 ;;
 esac
@@ -68,6 +72,8 @@ if [[ $runner == claude && \$last_line == *claude-fails* ]]; then
   jq -nc '{type: "result", is_error: true, result: "There is an issue with the selected model."}'
   exit 1
 elif [[ $runner == claude ]]; then
+  jq -nc '{type: "system", subtype: "init"}'
+  jq -nc '{type: "assistant", message: {content: [{type: "tool_use", name: "Bash", input: {command: "git status", description: "check"}}]}}'
   jq -nc --arg t "fake-claude: \$last_line" '{type: "result", is_error: false, result: \$t}'
 else
   printf 'fake-pi: %s\n' "\$last_line"
@@ -236,7 +242,14 @@ jq '.dispatcher.runner = "claude"' "$WORK/config.json" >"$WORK/config.tmp" && mv
 history "1700000052.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac hi claude"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000051.000000 "$relay" serve 2>/dev/null
 grep -Fq ":hatched_chick: [mac] fake-claude: Message from Rasmus: hi claude" "$WORK/sent.tsv" || fail "claude dispatcher reply missing: $(sent)"
-grep -Fq -- '-p --output-format json --settings {"autoMemoryEnabled":false} --model haiku' "$WORK/claude-args.log" || fail "claude dispatcher args: $(cat "$WORK/claude-args.log")"
+grep -Fq -- '-p --output-format stream-json --verbose --settings {"autoMemoryEnabled":false} --model haiku' "$WORK/claude-args.log" || fail "claude dispatcher args: $(cat "$WORK/claude-args.log")"
+# each dispatcher answer keeps a record with the agent's steps, for status --json and activity
+turn=$("$relay" status --json | jq -c '.turns[0]')
+jq -e '.label == "mac" and .status == "done" and .text == "hi claude" and .runner == "claude" and .ts == "1700000052.000000" and .dir == "'"$WORK/agent"'" and (.answer | contains("fake-claude"))' <<<"$turn" >/dev/null || fail "turn record: $turn"
+steps=$("$relay" activity "$(jq -r .id <<<"$turn")" --json)
+jq -e 'map(.kind) == ["relay", "start", "tool", "done"] and .[0].text == "claude haiku in '"$WORK/agent"'" and (.[0].detail | contains("Message from Rasmus: hi claude"))
+  and .[2].text == "Bash git status" and .[2].detail == "command: git status\ndescription: check"' <<<"$steps" >/dev/null || fail "turn activity: $steps"
+[[ "$("$relay" activity "$(jq -r .id <<<"$turn")" | sed -n 3p)" == "tool${tab}Bash git status" ]] || fail "activity text: $("$relay" activity "$(jq -r .id <<<"$turn")")"
 # claude_settings reach every claude run, merged with the dispatcher's own settings
 jq '.claude_settings = {sandbox: {excludedCommands: ["acli *"]}}' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 history "1700000053.000000${tab}id:C0000000001${tab}$ME${tab}!mac hi settings"
@@ -258,9 +271,10 @@ history "1700000060.000000${tab}id:C0000000001${tab}$ME${tab}!client and again"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000055.000000 "$relay" serve 2>/dev/null
 for i in $(seq 1 50); do grep -Fq "fake-claude: and again" "$WORK/sent.tsv" 2>/dev/null && break; sleep 0.1; done
 wait_for_status client done
-claude_calls=$(grep -E '^-p --output-format json --(session-id|resume) ' "$WORK/claude-args.log")
-[[ "$(sed -n 1p <<<"$claude_calls")" == "-p --output-format json --session-id $uuid "* ]] || fail "claude first turn: $(sed -n 1p <<<"$claude_calls")"
-[[ "$(sed -n 2p <<<"$claude_calls")" == "-p --output-format json --resume $uuid "* ]] || fail "claude resume: $(sed -n 2p <<<"$claude_calls")"
+claude_calls=$(grep -E '^-p --output-format stream-json --verbose --(session-id|resume) ' "$WORK/claude-args.log")
+[[ "$(sed -n 1p <<<"$claude_calls")" == "-p --output-format stream-json --verbose --session-id $uuid "* ]] || fail "claude first turn: $(sed -n 1p <<<"$claude_calls")"
+[[ "$(sed -n 2p <<<"$claude_calls")" == "-p --output-format stream-json --verbose --resume $uuid "* ]] || fail "claude resume: $(sed -n 2p <<<"$claude_calls")"
+"$relay" activity client --json | jq -e 'map(.kind) == ["relay", "start", "tool", "done"] and (.[0].detail | contains("--resume"))' >/dev/null || fail "worker activity is not this turn's: $("$relay" activity client --json)"
 
 # a failing claude run reports the JSON result, not its stderr
 out=$("$relay" spawn client "claude-fails" --name broken --runner claude)
@@ -468,7 +482,7 @@ history "1700000201.000000${tab}id:C0000000001${tab}$ME${tab}!old trigger"
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000199.000000 "$relay" serve 2>/dev/null
 grep -Fxq "id:C0000000002${tab}:crown: fake-pi: Message from Rasmus: hello there" "$WORK/sent.tsv" || fail "custom trigger in a second channel: $(sent)"
 [[ "$(sent)" != *"old trigger"* ]] || fail "the default ! still triggered: $(sent)"
-jq -e '.channel == "C0000000001" and .channels == ["C0000000001", "C0000000002"]' "$WORK/state/serve.json" >/dev/null || fail "serve.json channels: $(cat "$WORK/state/serve.json")"
+jq -e '.channel == "C0000000001" and .channels == ["C0000000001", "C0000000002"] and .slack_url == "https://acme.slack.com/"' "$WORK/state/serve.json" >/dev/null || fail "serve.json channels: $(cat "$WORK/state/serve.json")"
 rm -f "$WORK/sent.tsv"
 SLACK_RELAY_CHANNEL=C0000000002 "$relay" spawn client "chan task" --name chan --runner pi >/dev/null
 wait_for_status chan done
@@ -545,6 +559,33 @@ history "1700000404.000000${tab}id:C0000000001${tab}$ME${tab}!mac stop the flaky
 SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000402.000000 "$relay" serve 2>/dev/null
 grep -Fq "[mac] Nothing to stop." "$WORK/sent.tsv" || fail "stop with nothing running: $(sent)"
 grep -Fq "Message from Rasmus: stop the flaky retries" "$WORK/sent.tsv" || fail "a message starting with stop did not reach the dispatcher: $(sent)"
+"$relay" status --json | jq -e '[.turns[] | select(.text == "take your time")][0].status == "stopped"' >/dev/null \
+  || fail "stopped turn record: $("$relay" status --json | jq -c .turns)"
+
+# cancel <turn> stops one dispatcher answer from outside Slack, the way "!mac stop" does
+rm -f "$WORK/sent.tsv" "$WORK/updates.tsv" "$WORK/slow.pid" "$WORK/state/serve.json"
+history "1700000406.000000${tab}id:C0000000001${tab}$ME${tab}!mac take your time"
+SLACK_RELAY_INTERVAL=0.2 SLACK_RELAY_SINCE=1700000405.500000 "$relay" serve 2>"$WORK/cancel.log" &
+serve_pid=$!
+for i in $(seq 1 50); do [[ -s "$WORK/slow.pid" ]] && break; sleep 0.1; done
+agent=$(cat "$WORK/slow.pid")
+turn=$("$relay" status --json | jq -r '.turns[] | select(.status == "running") | .id')
+[[ "$turn" =~ ^[0-9]+-[0-9]+$ ]] || fail "no running turn in status --json: $("$relay" status --json | jq -c .turns)"
+[[ "$("$relay" cancel "$turn")" == "stopped $turn" ]] || fail "cancel turn"
+for i in $(seq 1 20); do kill -0 "$agent" 2>/dev/null || break; sleep 0.1; done
+! kill -0 "$agent" 2>/dev/null || fail "cancel left the dispatcher's agent running"
+grep -Fq "[mac] Stopped." "$WORK/updates.tsv" || fail "cancel did not edit the thinking post: $(cat "$WORK/updates.tsv" 2>/dev/null)"
+"$relay" status --json | jq -e --arg t "$turn" '.turns[] | select(.id == $t) | .status == "stopped"' >/dev/null || fail "cancelled turn status"
+[[ "$("$relay" cancel "$turn")" == "$turn is not running" ]] || fail "cancel twice"
+kill "$serve_pid"; wait "$serve_pid" 2>/dev/null || true
+rm -f "$WORK/state/serve.json"
+# a turn whose channel left the config still stops, and cancel goes on to the next one
+sleep 30 & orphan=$!
+jq -n --argjson pid "$orphan" '{id: "1-\($pid)", label: "mac", pid: $pid, channel: "C0999999999", thread: "-", placeholder: "", text: "x", since: "2020-01-01T00:00:00Z", status: "running"}' \
+  >"$WORK/state/dispatch/1-$orphan.json"
+out=$("$relay" cancel "1-$orphan" "$turn") || fail "cancel died on a channel outside the config: $out"
+[[ "$out" == "stopped 1-$orphan"$'\n'"$turn is not running" ]] || fail "cancel with an old channel: $out"
+wait "$orphan" 2>/dev/null || true
 
 # "!<worker> stop" ends a working worker and keeps it, so it can be picked up again
 rm -f "$WORK/sent.tsv" "$WORK/slow.pid"
@@ -561,6 +602,28 @@ sleep 0.3
 [[ "$(sent)" != *"too late"* && "$(sent)" != *"error"* ]] || fail "a stopped worker still posted: $(sent)"
 "$relay" remove slowpoke >/dev/null
 
+# cancel <worker> stops it from outside Slack and says so where the worker posts
+rm -f "$WORK/sent.tsv" "$WORK/slow.pid"
+"$relay" spawn client "take your time" --name slowpoke >/dev/null
+for i in $(seq 1 50); do [[ -s "$WORK/slow.pid" ]] && break; sleep 0.1; done
+agent=$(cat "$WORK/slow.pid")
+[[ "$("$relay" cancel slowpoke)" == "stopped slowpoke" ]] || fail "cancel worker"
+for i in $(seq 1 20); do kill -0 "$agent" 2>/dev/null || break; sleep 0.1; done
+! kill -0 "$agent" 2>/dev/null || fail "cancel left the worker's agent running"
+jq -e '.status == "stopped"' "$WORK/state/workers/slowpoke.json" >/dev/null || fail "worker status after cancel"
+grep -Fq "[slowpoke] Stopped. Write !slowpoke … to pick it up again." "$WORK/sent.tsv" || fail "worker cancel not confirmed: $(sent)"
+"$relay" cancel nope 2>/dev/null && fail "cancelled a worker that doesn't exist"
+"$relay" remove slowpoke >/dev/null
+[[ ! -e "$WORK/state/workers/slowpoke.events" ]] || fail "remove kept the worker's activity"
+
+# a restart does not answer a thread reply it already answered: serve starts from now
+rm -f "$WORK/sent.tsv" "$WORK/state/serve.json"
+history "1700000601.000000${tab}id:C0000000001${tab}$ME${tab}!mac answered before the restart${tab}1700000600.000000" \
+  "1700000600.000000${tab}id:C0000000001${tab}$ME${tab}parent${tab}1700000600.000000"
+cp "$WORK/history.tsv" "$WORK/thread.tsv"
+SLACK_RELAY_ONCE=1 "$relay" serve 2>/dev/null
+[[ "$(sent)" != *"answered before the restart"* ]] || fail "a restart answered an old thread reply again: $(sent)"
+
 # the Slack token must belong to the configured user
 set +e
 out=$(FAKE_WHOAMI=$OTHER SLACK_RELAY_ONCE=1 "$relay" serve 2>&1)
@@ -570,11 +633,13 @@ set -e
 
 # serve runs once at a time
 mkdir -p "$WORK/state"
-jq -n --argjson pid $$ '{pid: $pid}' >"$WORK/state/serve.json"
+bash -c 'exec -a "slack-relay serve" sleep 30' & fake_serve=$!
+jq -n --argjson pid "$fake_serve" '{pid: $pid}' >"$WORK/state/serve.json"
 set +e
 out=$(SLACK_RELAY_ONCE=1 "$relay" serve 2>&1)
 code=$?
 set -e
+kill "$fake_serve"
 [[ $code -eq 1 && "$out" == *"already running"* ]] || fail "second serve started: $code $out"
 rm -f "$WORK/state/serve.json"
 

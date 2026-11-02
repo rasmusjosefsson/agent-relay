@@ -74,30 +74,53 @@ struct ShellCLI: RelayCLI {
 
     func run(_ args: [String], stdin: String?) async -> CLIResult {
         let executable = executable, environment = environment
-        return await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable.hasPrefix("/") ? executable : "/usr/bin/env")
-            process.arguments = executable.hasPrefix("/") ? args : [executable] + args
-            process.environment = environment
-            let out = Pipe(), err = Pipe(), input = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            process.standardInput = stdin == nil ? FileHandle.nullDevice : input
-            do {
-                try process.run()
-            } catch {
-                return CLIResult(status: 127, stdout: Data(), stderr: "can't run \(executable): \(error.localizedDescription)")
+        // Plain threads, not the async pool: blocking reads there can starve it, and waitUntilExit
+        // there can miss the exit and wait forever, which froze status polling.
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: Self.runBlocking(executable, environment, args, stdin))
             }
-            if let stdin {
-                input.fileHandleForWriting.write(Data(stdin.utf8))
-                try? input.fileHandleForWriting.close()
-            }
-            // Read both pipes before waiting so a large output can't fill the buffer and block
-            async let stdoutData = out.fileHandleForReading.readDataToEndOfFile()
-            async let stderrData = err.fileHandleForReading.readDataToEndOfFile()
-            let (o, e) = await (stdoutData, stderrData)
-            process.waitUntilExit()
-            return CLIResult(status: process.terminationStatus, stdout: o, stderr: String(decoding: e, as: UTF8.self))
-        }.value
+        }
+    }
+
+    private static func runBlocking(_ executable: String, _ environment: [String: String], _ args: [String], _ stdin: String?) -> CLIResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable.hasPrefix("/") ? executable : "/usr/bin/env")
+        process.arguments = executable.hasPrefix("/") ? args : [executable] + args
+        process.environment = environment
+        let out = Pipe(), err = Pipe(), input = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+        process.standardInput = stdin == nil ? FileHandle.nullDevice : input
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        do {
+            try process.run()
+        } catch {
+            return CLIResult(status: 127, stdout: Data(), stderr: "can't run \(executable): \(error.localizedDescription)")
+        }
+        if let stdin {
+            input.fileHandleForWriting.write(Data(stdin.utf8))
+            try? input.fileHandleForWriting.close()
+        }
+        // Read both pipes at once so a large output can't fill one buffer and block
+        let reads = DispatchGroup()
+        nonisolated(unsafe) var o = Data(), e = Data()
+        DispatchQueue.global().async(group: reads) { o = out.fileHandleForReading.readDataToEndOfFile() }
+        DispatchQueue.global().async(group: reads) { e = err.fileHandleForReading.readDataToEndOfFile() }
+        // A command that hangs (or leaves a child holding its output) must not stall the app for good
+        if exited.wait(timeout: .now() + 120) == .timedOut {
+            process.terminate()
+            _ = exited.wait(timeout: .now() + 2)
+            try? out.fileHandleForReading.close()
+            try? err.fileHandleForReading.close()
+            return CLIResult(status: 124, stdout: Data(), stderr: "slack-relay \(args.first ?? "") took longer than 2 minutes")
+        }
+        if reads.wait(timeout: .now() + 5) == .timedOut {
+            // a background child still holds the pipes; what was read so far is all there is
+            try? out.fileHandleForReading.close()
+            try? err.fileHandleForReading.close()
+        }
+        return CLIResult(status: process.terminationStatus, stdout: o, stderr: String(decoding: e, as: UTF8.self))
     }
 }

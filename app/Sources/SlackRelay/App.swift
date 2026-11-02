@@ -34,7 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.menu()
         store.startPolling()
-        statusItem = StatusItem(store: store) { [weak self] in self?.showWindow() }
+        statusItem = StatusItem(store: store) { [weak self] pane in
+            if let pane { self?.nav.selected = pane }
+            self?.showWindow()
+        }
         showWindow()
     }
 

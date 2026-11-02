@@ -6,10 +6,11 @@ import Observation
 final class StatusItem: NSObject, NSMenuDelegate {
     private let item: NSStatusItem
     private let store: Store
-    private let open: () -> Void
+    private let open: (SidebarItem?) -> Void
     private var symbol: String?
 
-    init(store: Store, open: @escaping () -> Void) {
+    /// `open` shows the window, on the given pane when there is one.
+    init(store: Store, open: @escaping (SidebarItem?) -> Void) {
         self.store = store
         self.open = open
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -57,6 +58,22 @@ final class StatusItem: NSObject, NSMenuDelegate {
             menu.addItem(line)
         }
         menu.addItem(.separator())
+        let running = store.runs.filter(\.isActive)
+        for run in running {
+            let entry = NSMenuItem(title: Self.oneLine("\(run.label): \(run.text)"), action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            let step = NSMenuItem(title: Self.oneLine(run.last?.text ?? (run.status == "waiting" ? "Waiting for your reply" : "Starting…")), action: nil, keyEquivalent: "")
+            step.isEnabled = false
+            sub.addItem(step)
+            sub.addItem(.separator())
+            sub.addItem(item("Show in Activity", #selector(openActivity(_:))))
+            let stop = item("Stop", #selector(stopRun(_:)))
+            stop.representedObject = run.id
+            sub.addItem(stop)
+            entry.submenu = sub
+            menu.addItem(entry)
+        }
+        if !running.isEmpty { menu.addItem(.separator()) }
         menu.addItem(item("Open Slack Relay", #selector(openWindow(_:))))
         if let action = store.serveAction {
             let busy = NSMenuItem(title: action == "start" ? "Starting…" : "Stopping…", action: nil, keyEquivalent: "")
@@ -76,6 +93,8 @@ final class StatusItem: NSObject, NSMenuDelegate {
             return store.statusError == nil ? "Reading status…" : "Can't read status"
         }
         if status.serve.running {
+            let count = store.runningCount
+            if count > 0 { return "\(count) running" }
             if let busy = status.serve.busy { return "\(busy.label) is working" }
             return "Relay running"
         }
@@ -93,8 +112,13 @@ final class StatusItem: NSObject, NSMenuDelegate {
         return line.count > 80 ? String(line.prefix(79)) + "…" : line
     }
 
-    @objc private func openWindow(_ sender: Any?) { open() }
+    @objc private func openWindow(_ sender: Any?) { open(nil) }
+    @objc private func openActivity(_ sender: Any?) { open(.activity) }
     @objc private func startRelay(_ sender: Any?) { Task { await store.startServe() } }
     @objc private func stopRelay(_ sender: Any?) { Task { await store.stopServe() } }
+    @objc private func stopRun(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let run = store.runs.first(where: { $0.id == id }) else { return }
+        Task { await store.cancel(run) }
+    }
     @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
 }

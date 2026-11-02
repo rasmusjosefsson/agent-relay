@@ -3,6 +3,7 @@ import SwiftUI
 
 enum SidebarItem: String, CaseIterable, Identifiable {
     case general = "General"
+    case activity = "Activity"
     case workers = "Workers"
     case connectors = "Connectors"
     case memory = "Memory"
@@ -10,12 +11,13 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    static let primaryItems: [SidebarItem] = [.general, .workers, .connectors, .memory]
+    static let primaryItems: [SidebarItem] = [.general, .activity, .workers, .connectors, .memory]
     static let settingsItems: [SidebarItem] = [.doctor]
 
     var icon: String {
         switch self {
         case .general: "gearshape.fill"
+        case .activity: "waveform.path.ecg"
         case .workers: "hammer.fill"
         case .connectors: "powerplug.fill"
         case .memory: "brain.head.profile"
@@ -26,6 +28,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     var tint: Color {
         switch self {
         case .general: .gray
+        case .activity: .blue
         case .workers: .orange
         case .connectors: .green
         case .memory: .pink
@@ -39,6 +42,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     var summary: String {
         switch self {
         case .general: "Start the relay and choose where it listens, how you call it, and which agents answer."
+        case .activity: "Every answer and worker as it runs, with what its agent is doing right now. Open one to follow each step, or stop it."
         case .workers: "Agents started in a repo. Each keeps its own session between turns."
         case .connectors: "Tools the agents reach through their own CLIs. Each check runs the CLI's sign-in status; no token is shown."
         case .memory: "MEMORY.md in the dispatcher's working folder. The dispatcher reads it every turn and keeps it under the limit."
@@ -49,6 +53,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     private var keywords: [String] {
         switch self {
         case .general: ["status", "serve", "start", "stop", "channel", "trigger", "icon", "emoji", "opencode", "claude", "pi", "model", "runner", "dispatcher", "repos", "config", "settings"]
+        case .activity: ["running", "stop", "cancel", "kill", "stream", "feed", "steps", "tools", "answer"]
         case .workers: ["session", "task", "repo", "log"]
         case .connectors: ["slack", "github", "jira", "datadog", "grafana", "clickhouse", "token", "auth"]
         case .memory: ["memory.md", "notes"]
@@ -229,8 +234,8 @@ struct MainWindowView: View {
         SidebarRow(
             item: item,
             isSelected: nav.selected == item,
-            badge: item == .workers ? store.waitingCount : item == .connectors ? store.failingConnectors : 0,
-            badgeColor: item == .connectors ? .red : .orange
+            badge: item == .activity ? store.runningCount : item == .workers ? store.waitingCount : item == .connectors ? store.failingConnectors : 0,
+            badgeColor: item == .activity ? .blue : item == .connectors ? .red : .orange
         ) { nav.selected = item }
     }
 }
@@ -249,7 +254,11 @@ struct RelayFooter: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(store.status == nil ? "Reading status…" : running ? "Relay running" : "Relay stopped")
                     .font(.callout.weight(.medium))
-                if let busy = store.status?.serve.busy {
+                if running, store.runningCount > 0 {
+                    Text("\(store.runningCount) running")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let busy = store.status?.serve.busy {
                     Text("\(busy.label) is working")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -276,6 +285,7 @@ struct PaneView: View {
         Group {
             switch item {
             case .general: GeneralPane(store: store)
+            case .activity: ActivityPane(store: store)
             case .workers: WorkersPane(store: store)
             case .connectors: ConnectorsPane(store: store)
             case .memory: MemoryPane(store: store)

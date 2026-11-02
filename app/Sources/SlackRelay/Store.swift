@@ -56,6 +56,38 @@ final class Store {
     var failingConnectors: Int { connectors?.filter { $0.ok == false }.count ?? 0 }
     var trigger: String { fields?.fields.first { $0.key == "trigger" }?.value?.string ?? "!" }
 
+    /// Every dispatcher answer and worker, running ones first, then the newest finished.
+    var runs: [Run] {
+        guard let status else { return [] }
+        let dispatcher = status.dispatcher
+        let turns = (status.turns ?? []).map { Run(turn: $0, dispatcher: dispatcher) }
+        let all = turns + status.workers.map(Run.init(worker:))
+        return all.sorted { a, b in
+            a.isActive != b.isActive ? a.isActive : (a.isActive ? a.started > b.started : (a.finished ?? a.started) > (b.finished ?? b.started))
+        }
+    }
+    var runningCount: Int { runs.filter(\.isActive).count }
+
+    /// Runs grouped by the Slack thread they belong to, running ones first, then the newest.
+    var conversations: [Conversation] {
+        var groups: [String: [Run]] = [:]
+        var order: [String] = []
+        for run in runs {
+            let key = run.threadKey ?? run.id
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(run)
+        }
+        return order.map { key in
+            Conversation(id: key, runs: groups[key]!.sorted { $0.started < $1.started })
+        }.sorted { a, b in
+            a.isActive != b.isActive ? a.isActive : a.latest > b.latest
+        }
+    }
+    /// Error from the last Stop, by run
+    var runErrors: [String: String] = [:]
+    /// Run IDs a Stop was pressed for and that still show as running
+    var stopping = Set<String>()
+
     enum Applied { case live, pending, restart }
 
     /// Whether the running serve uses the saved settings; nil when it isn't running.
@@ -76,7 +108,7 @@ final class Store {
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshStatus()
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
@@ -222,6 +254,20 @@ final class Store {
         let result = await cli.run("remove", name)
         workerErrors[name] = result.ok ? nil : result.message
         await refreshStatus()
+    }
+
+    /// Stops one dispatcher answer or worker, the way "!<name> stop" does in Slack.
+    func cancel(_ run: Run) async {
+        stopping.insert(run.id)
+        defer { stopping.remove(run.id) }
+        let result = await cli.run("cancel", run.id)
+        runErrors[run.id] = result.ok ? nil : result.message
+        await refreshStatus()
+    }
+
+    /// The steps a run's agent took so far, oldest first; nil when the CLI can't say.
+    func activity(_ id: String) async -> [ActivityRow]? {
+        decode([ActivityRow].self, await cli.run("activity", id, "--json", "--limit", "500"))
     }
 
     func startServe() async { await serve("start") }

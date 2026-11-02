@@ -4,6 +4,8 @@ import Foundation
 struct Status: Decodable, Equatable {
     var serve: Serve
     var dispatcher: Dispatcher
+    /// Dispatcher answers, newest first; absent from a CLI older than the app
+    var turns: [Turn]?
     var workers: [Worker]
     var paths: Paths
 
@@ -19,6 +21,8 @@ struct Status: Decodable, Equatable {
         var lastPoll: String?
         var running: Bool
         var busy: Busy?
+        /// The workspace address, like https://acme.slack.com/, for links to messages
+        var slackUrl: String?
     }
 
     struct Busy: Decodable, Equatable {
@@ -49,17 +53,149 @@ struct Worker: Decodable, Equatable, Identifiable {
     var runner: String
     var model: String?
     var session: String?
+    var channel: String?
     var thread: String?
     var turns: Int?
     var task: String?
     var started: String?
+    /// When the current or last turn started
+    var turnStarted: String?
     var finished: String?
     var status: String
     var pid: Int?
     var log: String?
+    /// The agent's newest step while it works
+    var last: ActivityRow?
 
     var id: String { name }
     var isActive: Bool { status == "running" || status == "waiting" }
+}
+
+/// One dispatcher answer from `status --json` `turns`: running, or one of the newest finished.
+struct Turn: Decodable, Equatable, Identifiable {
+    var id: String
+    var label: String?
+    var text: String
+    var since: String
+    var finished: String?
+    var status: String
+    var runner: String?
+    var model: String?
+    var answer: String?
+    var last: ActivityRow?
+    var channel: String?
+    /// "-" when the answer went to the channel
+    var thread: String?
+    /// The Slack message that asked
+    var ts: String?
+    var dir: String?
+
+    var isActive: Bool { status == "running" }
+}
+
+/// One step from `slack-relay activity --json`.
+struct ActivityRow: Decodable, Equatable, Hashable {
+    /// relay, start, thinking, tool, output, text, error, or done
+    var kind: String
+    var text: String
+    /// All of it: the prompt, a tool's input or output, a long reply
+    var detail: String?
+}
+
+/// The runs from one Slack thread, oldest first, or a single run asked outside a thread.
+struct Conversation: Identifiable, Equatable {
+    var id: String
+    var runs: [Run]
+
+    var isActive: Bool { runs.contains(where: \.isActive) }
+    var latest: String { runs.map { $0.finished ?? $0.started }.max() ?? "" }
+    var isThread: Bool { runs.count > 1 }
+
+    /// The whole thread in Slack: its first run's link without a message
+    func slackLink(base: String?) -> URL? {
+        guard var first = runs.first else { return nil }
+        first.ts = nil
+        return first.slackLink(base: base)
+    }
+}
+
+/// A dispatcher answer or a worker, as the Activity pane lists them.
+struct Run: Identifiable, Equatable {
+    enum Kind { case answer, worker }
+
+    /// Turn ID or worker name; what `activity` and `cancel` take
+    var id: String
+    var kind: Kind
+    var label: String
+    var status: String
+    /// The Slack message, or the worker's task
+    var text: String
+    var started: String
+    var finished: String?
+    var agent: String
+    var repo: String?
+    var last: ActivityRow?
+    var answer: String?
+    var channel: String?
+    var thread: String?
+    var ts: String?
+    var dir: String?
+
+    var isActive: Bool { status == "running" || status == "waiting" }
+
+    /// "<channel>/<thread>" when it was asked in a Slack thread, so runs in one thread group together
+    var threadKey: String? {
+        guard let thread, thread != "-", !thread.isEmpty else { return nil }
+        return "\(channel ?? "")/\(thread)"
+    }
+
+    /// The Slack message this came from, or its thread; nil without the workspace address.
+    func slackLink(base: String?) -> URL? {
+        guard var base, let channel, !channel.isEmpty else { return nil }
+        if !base.hasSuffix("/") { base += "/" }
+        let inThread = thread.map { $0 != "-" && !$0.isEmpty } ?? false
+        guard let message = ts ?? (inThread ? thread : nil) else { return URL(string: "\(base)archives/\(channel)") }
+        var link = "\(base)archives/\(channel)/p\(message.replacingOccurrences(of: ".", with: ""))"
+        if inThread, let thread { link += "?thread_ts=\(thread)&cid=\(channel)" }
+        return URL(string: link)
+    }
+
+    init(turn: Turn, dispatcher: Status.Dispatcher) {
+        id = turn.id
+        kind = .answer
+        label = turn.label ?? dispatcher.label
+        status = turn.status
+        text = turn.text
+        started = turn.since
+        finished = turn.finished
+        agent = Self.agent(turn.runner ?? dispatcher.runner, turn.model)
+        last = turn.last
+        answer = turn.answer
+        channel = turn.channel
+        thread = turn.thread
+        ts = turn.ts
+        dir = turn.dir
+    }
+
+    init(worker: Worker) {
+        id = worker.name
+        kind = .worker
+        label = worker.name
+        status = worker.status
+        text = worker.task ?? ""
+        started = worker.turnStarted ?? worker.started ?? ""
+        finished = worker.finished
+        agent = Self.agent(worker.runner, worker.model)
+        repo = worker.repo
+        last = worker.last
+        channel = worker.channel
+        thread = worker.thread
+        dir = worker.dir
+    }
+
+    private static func agent(_ runner: String, _ model: String?) -> String {
+        [runner, model.flatMap { $0.isEmpty ? nil : $0 }].compactMap { $0 }.joined(separator: " · ")
+    }
 }
 
 /// `slack-relay connectors --json`; `ok` is nil when the connector is turned off.
