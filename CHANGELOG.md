@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `dispatcher.local_agent` names an OpenCode agent the dispatcher runs in when its model is an `ollama/` one. A slim agent (short prompt, few tools, no skills) keeps a local model from reading OpenCode's full prompt on every message; other models keep the default agent.
+
 - The Mac app has an Activity pane: every dispatcher answer and worker as it runs, the step its agent is on now (`Bash git status`, `Read src/foo.ts`), a live feed of every step when you open one, and Stop for each. Each shows the channel and thread it came from, with Open in Slack, and the agent, model and folder it runs in. The feed has what the relay sent (command and whole prompt), the agent's session (model, tools, MCP servers), thinking, each tool call with its input and output, its text, and time and cost at the end; click a step to see all of it. Claude keeps its thinking text to itself, so the feed shows only that it is thinking. Two `!boss …` messages at once show as two cards. The menu bar menu lists what is running, with its step and Stop. Finished answers stay listed with their reply, the newest 20.
 - The app no longer stops refreshing after a while: a finished `slack-relay` command could leave it waiting forever.
 - Answers in one Slack thread show as one card in Activity, oldest first.

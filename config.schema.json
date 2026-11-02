@@ -131,6 +131,12 @@
             "pi": { "type": "string", "default": "" }
           }
         },
+        "local_agent": {
+          "title": "OpenCode agent for local models",
+          "description": "Used instead of OpenCode's default agent when the dispatcher runs an ollama/ model, e.g. a slim agent in workdir/.opencode/opencode.json. Empty uses the default agent.",
+          "type": "string",
+          "default": ""
+        },
         "workdir": {
           "title": "Working folder",
           "description": "Holds MEMORY.md.",

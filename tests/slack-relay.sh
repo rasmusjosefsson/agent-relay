@@ -90,7 +90,7 @@ cat >"$WORK/config.json" <<EOF
   "jira_url": "https://jira.example/",
   "jira_projects": ["ADE"],
   "user": "$ME",
-  "dispatcher": { "label": "mac", "models": { "opencode": "cheap/model" }, "workdir": "$WORK/agent", "auto": false },
+  "dispatcher": { "label": "mac", "models": { "opencode": "cheap/model" }, "local_agent": "slim", "workdir": "$WORK/agent", "auto": false },
   "worker": { "models": { "opencode": "oc/model", "claude": "cl/model" }, "auto": false },
   "repos": { "client": "$WORK/client" }
 }
@@ -171,6 +171,15 @@ grep -Fq -- "--model cheap/model" "$WORK/opencode-args.log" || fail "dispatcher 
 ! grep -Fq -- "--session" "$WORK/opencode-args.log" || fail "dispatcher reused a session"
 [[ -f "$WORK/agent/MEMORY.md" ]] || fail "MEMORY.md not created"
 grep -Fq "Write Jira keys plainly (ADE-123), once" "$WORK/opencode-args.log" || fail "dispatcher prompt lacks the link rule"
+! grep -Fq -- "--agent" "$WORK/opencode-args.log" || fail "dispatcher used local_agent for a non-local model"
+
+# local_agent: an ollama/ dispatcher model runs in OpenCode's slimmer agent
+jq '.dispatcher.models.opencode = "ollama/small"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
+rm -f "$WORK/opencode-args.log"
+history "1700000022.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac local"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000021.500000 "$relay" serve 2>/dev/null
+grep -Fq -- "--agent slim" "$WORK/opencode-args.log" || fail "local model did not get local_agent: $(cat "$WORK/opencode-args.log")"
+jq '.dispatcher.models.opencode = "cheap/model"' "$WORK/config.json" >"$WORK/config.tmp" && mv "$WORK/config.tmp" "$WORK/config.json"
 
 # spawn: worker runs in the repo with its own session and posts its result
 rm -f "$WORK/sent.tsv" "$WORK/opencode-args.log"
