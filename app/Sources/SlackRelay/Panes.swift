@@ -26,7 +26,7 @@ struct WorkersPane: View {
             }
             if workers.isEmpty {
                 Section {
-                    Text("No workers yet. Ask the dispatcher in Slack, e.g. \(store.trigger)fix the flaky test in client.")
+                    Text("No workers yet. Ask the dispatcher in Slack, e.g. \(store.trigger)\(store.status?.dispatcher.label ?? "boss") fix the flaky test in client.")
                         .foregroundStyle(.secondary)
                 }
             }

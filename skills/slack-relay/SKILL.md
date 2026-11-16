@@ -53,7 +53,7 @@ Write links as Slack links with a short label (`<https://github.com/org/repo/pul
 
 `slack-relay serve` is the always-on loop. Start it only when the user asks for it.
 
-- `!<msg>` goes to the dispatcher (`dispatcher.label`, default `boss`), unless its first word names a worker. The dispatcher starts a fresh session each time on `dispatcher.runner` with that runner's model from `dispatcher.models`, with only `MEMORY.md` in `dispatcher.workdir` as memory, plus the user's earlier messages when they write in a thread. It answers quick things and starts workers.
+- The first word after `!` is always a name. `!<dispatcher> <msg>` goes to the dispatcher (`dispatcher.label`, default `boss`), `!<worker> <msg>` to that worker, and anything else is ignored, so `!fix the test` gets no answer. The dispatcher starts a fresh session each time on `dispatcher.runner` with that runner's model from `dispatcher.models`, with only `MEMORY.md` in `dispatcher.workdir` as memory, plus the user's earlier messages when they write in a thread. It answers quick things and starts workers.
 - `slack-relay spawn <repo> "<task>" [--runner opencode|claude|pi] [--model ID]` starts a worker in that repo's folder from `repos`, with its own session. The worker is named after the repo (`client`, then `client-2`), asks with `ask`, and its final reply is posted for it.
 - `!<worker> <msg>` to a finished worker resumes its session. While a worker runs, replies reach it only through its own `ask`.
 - `auto` maps to `opencode --auto` or `claude --dangerously-skip-permissions`. `pi -p` runs tools without asking either way.
