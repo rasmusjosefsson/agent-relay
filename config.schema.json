@@ -20,6 +20,41 @@
       "items": { "type": "string", "pattern": "^[CDG][A-Z0-9]{8,}$" },
       "default": []
     },
+    "channel_config": {
+      "title": "Per-channel settings",
+      "description": "Overrides keyed by Slack channel ID: memory_policy (explicit, ask, or auto), skills to focus on, a default repo, and extra instructions.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[CDG][A-Z0-9]{8,}$" },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "memory_policy": {
+            "title": "Memory policy",
+            "description": "When the dispatcher may save to this channel's memory: explicit (only when asked), ask (ask first), or auto (auto-save durable learnings with [YYYY-MM-DD]).",
+            "type": "string",
+            "enum": ["explicit", "ask", "auto"],
+            "default": "explicit"
+          },
+          "skills": {
+            "title": "Skills",
+            "description": "Skills or commands the dispatcher should focus on in this channel.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "repo": {
+            "title": "Default repo",
+            "description": "Repo name from repos to default to in this channel.",
+            "type": "string"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "description": "Extra standing instructions for the dispatcher in this channel.",
+            "type": "string"
+          }
+        }
+      },
+      "default": {}
+    },
     "user": {
       "title": "Your Slack member ID",
       "description": "Only messages written by this user are read. Slack profile → ⋮ → Copy member ID.",

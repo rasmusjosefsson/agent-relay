@@ -824,4 +824,39 @@ out=$(HOME="$mig_home" env -u AGENT_RELAY_CONFIG -u AGENT_RELAY_STATE "$relay" c
 [[ "$(jq -r .slack.token_file "$mig_home/.config/agent-relay/config.json")" == "~/.config/agent-relay/slack-token" ]] || fail "token_file not rewritten"
 [[ "$(jq -r .slack.cookie_file "$mig_home/.config/agent-relay/config.json")" == "~/.config/agent-relay/slack-cookie" ]] || fail "cookie_file not rewritten"
 
+# per-channel memory CLI (--channel by ID and name), channel_config validation, and dispatch prompt scoping
+"$relay" config set channel_config.C0000000001 '{"memory_policy":"auto","skills":["datadog-scout","clickhouse-scout"],"repo":"client","instructions":"Focus on production alerts."}' >/dev/null
+"$relay" config validate >/dev/null || fail "valid channel_config failed validation"
+"$relay" config set channel_config.C0000000001 '{"memory_policy":"bogus"}' 2>/dev/null && fail "invalid memory_policy accepted"
+"$relay" config set channel_config.not-a-channel '{"memory_policy":"auto"}' 2>/dev/null && fail "invalid channel_config key accepted"
+
+printf 'global note\n' | "$relay" memory set >/dev/null
+printf '[2026-11-27] alert runbook note\n' | "$relay" memory set --channel C0000000001 >/dev/null
+[[ "$("$relay" memory show)" == "global note" ]] || fail "global memory clobbered by channel memory"
+[[ "$("$relay" memory show --channel C0000000001)" == "[2026-11-27] alert runbook note" ]] || fail "channel memory read by ID failed"
+[[ "$("$relay" memory show --channel '#relay-test')" == "[2026-11-27] alert runbook note" ]] || fail "channel memory read by #name failed"
+[[ "$("$relay" memory --channel relay-test path)" == *"/memory/C0000000001.md" ]] || fail "channel memory path unexpected"
+mem_json=$("$relay" memory --json --channel relay-test)
+[[ "$(jq -r '.exists' <<<"$mem_json")" == true && "$(jq -r '.channel' <<<"$mem_json")" == C0000000001 ]] || fail "channel memory --json: $mem_json"
+"$relay" memory --channel no-such-channel show 2>/dev/null && fail "unknown channel name did not fail"
+
+# dispatch loads both global and channel memory plus channel_config policy/skills/repo/instructions
+rm -f "$WORK/opencode-args.log" "$WORK/sent.tsv" "$WORK/state/serve.json"
+history "1700000701.000000${tab}id:C0000000001${tab}$ME${tab}!mac check alert status${tab}"
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000700.000000 "$relay" serve 2>/dev/null
+grep -Fq "global note" "$WORK/opencode-args.log" || fail "dispatch prompt missing global memory"
+grep -Fq "[2026-11-27] alert runbook note" "$WORK/opencode-args.log" || fail "dispatch prompt missing channel memory"
+grep -Fq "Saved to memory:" "$WORK/opencode-args.log" || fail "dispatch prompt missing auto memory_policy"
+grep -Fq "datadog-scout, clickhouse-scout" "$WORK/opencode-args.log" || fail "dispatch prompt missing channel skills"
+grep -Fq "Default repo for this channel: client" "$WORK/opencode-args.log" || fail "dispatch prompt missing channel default repo"
+grep -Fq "Channel instructions: Focus on production alerts." "$WORK/opencode-args.log" || fail "dispatch prompt missing channel instructions"
+grep -Fq "update or delete the old line" "$WORK/opencode-args.log" || fail "dispatch prompt missing replaceable memory instruction"
+
+"$relay" config set channel_config.C0000000001 '{"memory_policy":"ask"}' >/dev/null
+rm -f "$WORK/opencode-args.log" "$WORK/sent.tsv" "$WORK/state/serve.json"
+history "1700000702.000000${tab}id:C0000000001${tab}$ME${tab}!mac check ask policy${tab}"
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000701.000000 "$relay" serve 2>/dev/null
+grep -Fq "ask before saving it" "$WORK/opencode-args.log" || fail "dispatch prompt missing ask memory_policy"
+"$relay" config unset channel_config.C0000000001 >/dev/null
+
 echo "agent-relay tests passed"

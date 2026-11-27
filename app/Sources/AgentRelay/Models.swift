@@ -249,6 +249,19 @@ struct Memory: Decodable, Equatable {
     var lines: Int
     var limit: Int
     var text: String
+    var channel: String?
+}
+
+/// Per-channel dispatcher overrides from `channel_config.<channel-id>`.
+struct ChannelConfig: Equatable {
+    var memoryPolicy: String = "explicit"
+    var skills: [String] = []
+    var repo: String = ""
+    var instructions: String = ""
+
+    var isDefault: Bool {
+        memoryPolicy == "explicit" && skills.isEmpty && repo.isEmpty && instructions.isEmpty
+    }
 }
 
 /// `agent-relay doctor --json`
