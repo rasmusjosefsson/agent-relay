@@ -67,6 +67,7 @@ slack-relay config set claude_settings '{"sandbox": {"excludedCommands": ["acli 
 | `!bot fix the flaky test in client with claude` | The dispatcher starts worker `client` on Claude Code. |
 | `!client use option 2` | Answers worker `client`'s question, or resumes it once it has finished. |
 | `!bot stop` | Ends every answer the dispatcher is still working on, and its agent. Its thinking post says "Stopped." |
+| `!bot recap [7d] [brief\|funny\|detailed] [raw]` | Summarizes your recent work (merged & open PRs, local git branches/dirty trees, optional local Langfuse sessions) scoped strictly to `recap.github_orgs`. On Mondays, the default lookback reaches back to Friday. |
 | `!client stop` | Ends worker `client` and its agent. `!client …` picks it up again in the same session. |
 | `!bot …` in the channel | The answer goes to a thread under your message. Keep talking there; the dispatcher sees your earlier messages in it. |
 | `!bot …` inside a thread | The answer goes to that thread. The dispatcher also sees your earlier messages there. |
@@ -81,6 +82,7 @@ Make it yours in the app's General pane (edit, then Save at the bottom) or with 
 - `show_label`: `false` drops the `[name]` tag.
 - `reply_in_thread`: `false` answers channel messages in the channel instead of a thread under them.
 - `thinking`: what the dispatcher posts the moment your message arrives, replaced by its answer when it's ready. Any text or emoji, like `:loading-2:`; empty posts nothing until the answer.
+- `recap`: scoped work recaps (`!bot recap` or `slack-relay recap --since 7d --mood funny`, `--raw` for a 0-token deterministic dump). Set `recap.github_orgs` (allowlist only — personal repos are never included), default `recap.mood` (`brief`, `funny`, or `detailed`), optional `recap.repo_roots`, and optional `recap.langfuse_url`.
 
 From an agent session on the Mac, use `slack-relay post`, `ask` and `wait` to report or ask a question. The skill in [`skills/slack-relay`](skills/slack-relay/SKILL.md) tells agents how; link that folder into `~/.agents/skills/` and `~/.claude/skills/`.
 

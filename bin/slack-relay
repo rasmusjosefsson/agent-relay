@@ -34,6 +34,7 @@ Usage:
   slack-relay connectors [--json] [NAME...]
   slack-relay channels [--json]
   slack-relay memory   [show | path | --json | set]   (set reads stdin)
+  slack-relay recap    [--since WINDOW] [--mood brief|funny|detailed] [--raw] [--json]
   slack-relay spawn    <repo> <task> [--name NAME] [--runner opencode|claude|pi] [--model ID]
   slack-relay remove   <worker>...   (stops it if it is still working, then deletes its state and log)
   slack-relay activity <worker|turn> [--json] [--limit N]   (what its agent did so far: tools, text, errors)
@@ -828,6 +829,201 @@ dispatch_turns() {
 }
 
 is_stop() { [[ "${1,,}" =~ ^stop[.!]*$ ]]; }
+is_recap() { [[ "${1,,}" =~ ^recap([[:space:]]|$) ]]; }
+
+recap_mood_instructions() {
+  case "$1" in
+    funny)
+      cat <<'EOF'
+Mood: funny
+- Write dry, understated, human 1-liners — wry observations about what the work actually accomplished, without cheesy puns, forced jokes, or exclamation marks.
+- Still be accurate and scannable. Group lightly (e.g. Shipped / In Flight / Local & Investigations; omit empty sections).
+- Include CI/review status on open PRs.
+EOF
+      ;;
+    detailed)
+      cat <<'EOF'
+Mood: detailed
+- Write a thorough work recap grouped into Shipped, In Flight, Local Work, and Investigations (omit empty sections).
+- For each PR, synthesize what changed and why from its body, diff stats, and changed files — do not just echo the raw PR title.
+- Include ticket keys, key files changed, CI status, review decision/comments, local branch & dirty state, and Langfuse investigation notes.
+EOF
+      ;;
+    *)
+      cat <<'EOF'
+Mood: brief
+- Straight to the point and ready for standup.
+- Group into Shipped, In Flight, and Local & Investigations (omit empty sections).
+- Write a short human description of what each change actually accomplishes (do not just echo raw PR titles).
+- Call out CI failures or review blockers on open PRs.
+EOF
+      ;;
+  esac
+}
+
+# Parses CLI or inline Slack recap arguments into RECAP_SINCE, RECAP_MOOD, RECAP_RAW, RECAP_JSON, RECAP_NOW.
+recap_parse_args() {
+  RECAP_SINCE=""
+  RECAP_MOOD=$(cfg .recap.mood)
+  RECAP_MOOD=${RECAP_MOOD:-brief}
+  RECAP_RAW=false
+  RECAP_JSON=false
+  RECAP_NOW=""
+  local tok lower
+  while (( $# )); do
+    case "$1" in
+      --since) [[ $# -ge 2 ]] || { echo "missing value for --since" >&2; return 2; }; RECAP_SINCE=$2; shift 2 ;;
+      --mood) [[ $# -ge 2 ]] || { echo "missing value for --mood" >&2; return 2; }; RECAP_MOOD=${2,,}; shift 2 ;;
+      --raw) RECAP_RAW=true; shift ;;
+      --json) RECAP_JSON=true; shift ;;
+      --now) [[ $# -ge 2 ]] || { echo "missing value for --now" >&2; return 2; }; RECAP_NOW=$2; shift 2 ;;
+      --*) echo "unknown option: $1" >&2; return 2 ;;
+      *)
+        tok=$1
+        lower=${tok,,}
+        case "$lower" in
+          brief|funny|detailed) RECAP_MOOD=$lower ;;
+          raw) RECAP_RAW=true ;;
+          yesterday|today) RECAP_SINCE=$lower ;;
+          *)
+            if [[ "$lower" =~ ^[0-9]+[dhw]$ || "$tok" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              RECAP_SINCE=$tok
+            else
+              echo "unrecognized recap argument: $tok (try e.g. 7d, funny, brief, detailed, or raw)" >&2
+              return 2
+            fi
+            ;;
+        esac
+        shift
+        ;;
+    esac
+  done
+  case "$RECAP_MOOD" in
+    brief|funny|detailed) ;;
+    *) echo "unknown mood '$RECAP_MOOD' (use brief, funny, or detailed)" >&2; return 2 ;;
+  esac
+}
+
+# Runs the Python collector and optionally summarizes with the configured dispatcher agent.
+recap_generate() {
+  local for_slack=$1 python data
+  python=$(find_python) || { printf 'error: python3 is required for recap'; return 1; }
+  local -a py_args=("$ROOT/bin/slack-relay-recap.py" --config-json "$(config_json)")
+  [[ -z "$RECAP_SINCE" ]] || py_args+=(--since "$RECAP_SINCE")
+  [[ -z "$RECAP_NOW" ]] || py_args+=(--now "$RECAP_NOW")
+
+  if [[ "$RECAP_JSON" == true ]]; then
+    "$python" "${py_args[@]}" --format json
+    return $?
+  fi
+  if [[ "$RECAP_RAW" == true ]]; then
+    "$python" "${py_args[@]}" --format raw
+    return $?
+  fi
+
+  local err_file
+  err_file=$(mktemp "${TMPDIR:-/tmp}/slack-relay-recap.XXXXXX")
+  if ! data=$("$python" "${py_args[@]}" --format json 2>"$err_file"); then
+    local msg
+    msg=$(cat "$err_file")
+    rm -f "$err_file"
+    printf '%s' "${msg:-error: failed to collect recap data}"
+    return 1
+  fi
+  rm -f "$err_file"
+
+  # 0-token fast path when there is no activity in the window
+  if jq -e '(.merged_prs | length) == 0 and (.open_prs | length) == 0 and (.local_git | length) == 0 and (.langfuse_sessions | length) == 0' >/dev/null <<<"$data"; then
+    "$python" "${py_args[@]}" --format raw
+    return 0
+  fi
+
+  local workdir runner model agent="" auto prompt extra_rules=""
+  workdir=$(expand_path "$(cfg .dispatcher.workdir)")
+  mkdir -p "$workdir"
+  runner=$(cfg .dispatcher.runner)
+  model=$(cfg "$DISPATCHER_MODEL")
+  auto=$(cfg .dispatcher.auto)
+  [[ "$runner" != opencode || "$model" != ollama/* ]] || agent=$(cfg .dispatcher.local_agent)
+  if [[ "$for_slack" == true ]]; then
+    extra_rules=$(link_rule)
+  fi
+
+  prompt=$(cat <<EOF
+You are writing a work recap for $OWNER from verified activity data scoped strictly to their configured GitHub orgs.
+$(recap_mood_instructions "$RECAP_MOOD")
+Rules:
+- Never invent work, PRs, files, or investigations that are not in the JSON data below.
+- Do not just copy raw PR titles; read each PR's body, diff stats, files, and commits to write a real human description of what was done.
+- Link PRs cleanly using Markdown links like [#123](url).
+- Keep the recap concise and scannable (under 3000 characters).
+- If warnings are present, mention them briefly at the end only if relevant.
+${extra_rules:+$extra_rules}
+
+Activity data (JSON):
+$data
+EOF
+)
+  run_agent "$runner" "$workdir" "" false "$model" "$auto" "slack-relay recap ($RECAP_MOOD)" "$prompt" "$agent"
+}
+
+command_recap() {
+  recap_parse_args "$@" || exit 2
+  local out
+  if ! out=$(recap_generate false); then
+    echo "$out" >&2
+    exit 1
+  fi
+  printf '%s\n' "$out"
+}
+
+dispatch_recap() {
+  local id=$1 label=$2 ts=$3 text=$4 workdir runner model placeholder answer status=done
+  local rest=${text#*[Rr][Ee][Cc][Aa][Pp]}
+  local -a args=()
+  if [[ -n "${rest// /}" ]]; then
+    read -r -a args <<<"$rest"
+  fi
+
+  local parse_err
+  if ! parse_err=$(recap_parse_args "${args[@]}" 2>&1 >/dev/null); then
+    post "$id" "$label" "Recap usage: \`${TRIGGER}${label} recap [7d|yesterday|YYYY-MM-DD] [brief|funny|detailed] [raw]\` ($parse_err)" >/dev/null
+    return 0
+  fi
+  recap_parse_args "${args[@]}"
+
+  workdir=$(expand_path "$(cfg .dispatcher.workdir)")
+  mkdir -p "$workdir" "$STATE/dispatch"
+  runner=$(cfg .dispatcher.runner)
+  model=$(cfg "$DISPATCHER_MODEL")
+  [[ "$RECAP_RAW" != true && "$RECAP_JSON" != true ]] || { runner=raw; model=""; }
+
+  local turn_id
+  turn_id="$(date +%s)-$BASHPID"
+  local turn="$STATE/dispatch/$turn_id.json"
+  local thread=${SLACK_RELAY_THREAD:--}
+  export SLACK_RELAY_EVENTS="$STATE/dispatch/$turn_id.events"
+  : >"$SLACK_RELAY_EVENTS"
+  jq -n --arg id "$turn_id" --arg l "$label" --argjson pid "$BASHPID" --arg c "$id" --arg t "$thread" --arg x "$text" \
+    --arg s "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg r "$runner" --arg m "$model" --arg ts "$ts" --arg d "$workdir" \
+    '{id: $id, label: $l, pid: $pid, channel: $c, thread: $t, ts: $ts, placeholder: "", text: $x, since: $s, runner: $r, model: $m, dir: $d, status: "running", context: []}' >"$turn"
+
+  placeholder=""
+  [[ -z "$(cfg .thinking)" ]] || placeholder=$(post "$id" "$label" "$(cfg .thinking)" 2>/dev/null) || placeholder=""
+  if [[ -n "$placeholder" ]]; then
+    set_turn "$turn_id" --arg p "$placeholder" '.placeholder = $p'
+  fi
+
+  answer=$(recap_generate true) || status=failed
+  answer=$(clip "${answer:-(no recap output)}")
+  post "$id" "$label" "$answer" "$placeholder" >/dev/null
+  local secs=$(( $(date +%s) - ${turn_id%%-*} )) finished
+  finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  set_turn "$turn_id" --arg s "$status" --arg a "$answer" --arg f "$finished" --argjson n "$secs" \
+    '.status = $s | .answer = $a | .finished = $f | .secs = $n'
+  jq -nc --arg f "$finished" --arg r "$runner" --arg m "$model" --arg a "" --argjson n "$secs" --arg s "$status" \
+    '{finished: $f, runner: $r, model: $m, agent: $a, secs: $n, status: $s}' >>"$STATE/speed.jsonl"
+}
 
 # Ends a process and everything it started, the process first so it can't post its killed child's error.
 kill_tree() {
@@ -902,6 +1098,8 @@ route() {
     echo "[$(date +%T)] [$name] in: $text" >&2
     if is_stop "$text"; then
       stop_dispatches "$id" "$name"
+    elif is_recap "$text"; then
+      dispatch_recap "$id" "$name" "$ts" "$text" &
     else
       # in the background, so serve keeps reading and "stop" can reach a slow turn
       dispatch "$id" "$name" "$ts" "$text" &
@@ -1067,6 +1265,10 @@ config_errors() {
     (if (.worker.auto | type) == "boolean" then empty else "worker.auto: true or false" end),
     (if (.claude_settings | type) == "object" then empty else "claude_settings: Claude Code settings object, e.g. {\"sandbox\": {\"excludedCommands\": [\"acli *\"]}}" end),
     (if (.repos | type) == "object" and all(.repos | to_entries[]; (.key | test("^[a-z0-9_-]+$")) and (.value | re("."))) then empty else "repos: map of one-word lowercase name to folder path" end),
+    (if (.recap.github_orgs | type) == "array" and all(.recap.github_orgs[]; re("^[A-Za-z0-9][A-Za-z0-9-]*$")) then empty else "recap.github_orgs: list of GitHub org names like [\"my-org\"]" end),
+    (if (.recap.mood | IN("brief", "funny", "detailed")) then empty else "recap.mood: brief, funny, or detailed" end),
+    (if (.recap.repo_roots | type) == "array" and all(.recap.repo_roots[]; re(".")) then empty else "recap.repo_roots: list of folder paths like [\"~/code\"]" end),
+    (if .recap.langfuse_url == "" or (.recap.langfuse_url | re("^https?://")) then empty else "recap.langfuse_url: http(s):// address or empty" end),
     (if (.connectors | type) == "object" and all(.connectors | to_entries[]; (.key | test("^[a-z0-9_-]+$")) and (.value | type) == "object" and (.value.check // "" | type) == "string") then empty else "connectors: map of one-word lowercase name to {\"title\": …, \"check\": \"<command>\"}" end)
   '
 }
@@ -1647,6 +1849,7 @@ case ${1:-} in
   connectors) shift; command_connectors "$@" ;;
   channels) shift; command_channels "$@" ;;
   memory) shift; command_memory "$@" ;;
+  recap) shift; command_recap "$@" ;;
   start) shift; command_start ;;
   stop) shift; command_stop ;;
   _work) shift; command_work "$@" ;;
