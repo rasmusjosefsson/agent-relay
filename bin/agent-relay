@@ -42,6 +42,7 @@ Usage:
   agent-relay post     <id:channel> <label> <message>
   agent-relay ask      <id:channel> <label> <message> [--timeout SEC]
   agent-relay wait     <id:channel> <label> [--since TS] [--timeout SEC]
+  agent-relay update   [--app | --no-app]
   agent-relay --version
 
 Config: ~/.config/agent-relay/config.json (AGENT_RELAY_CONFIG). Every key and its
@@ -2023,6 +2024,39 @@ command_stop() {
   die "serve (pid $pid) is still running"
 }
 
+# Pulls latest main, rebuilds Agent Relay.app if installed (or --app), and restarts serve if it was running.
+command_update() {
+  local app_mode=auto before after branch dest
+  while (( $# )); do
+    case "$1" in
+      --app) app_mode=yes; shift ;;
+      --no-app) app_mode=no; shift ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$ROOT is not a git checkout"
+  [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || die "uncommitted changes in $ROOT; commit or stash them first"
+  before=$(git -C "$ROOT" rev-parse HEAD)
+  branch=$(git -C "$ROOT" symbolic-ref --short HEAD 2>/dev/null || true)
+  [[ "$branch" == main ]] || git -C "$ROOT" checkout main
+  git -C "$ROOT" pull --ff-only
+  after=$(git -C "$ROOT" rev-parse HEAD)
+  if [[ "$before" == "$after" ]]; then
+    echo "already up to date (${after:0:7})"
+  else
+    echo "updated ${before:0:7} -> ${after:0:7}"
+  fi
+  dest="${AGENT_RELAY_APP_DIR:-/Applications}/Agent Relay.app"
+  if [[ "$app_mode" == yes || ( "$app_mode" == auto && -d "$dest" ) ]]; then
+    [[ -x "$ROOT/app/scripts/bundle.sh" ]] || die "missing $ROOT/app/scripts/bundle.sh"
+    "$ROOT/app/scripts/bundle.sh"
+  fi
+  if [[ "$before" != "$after" && "$(serve_json | jq -r .running)" == true ]]; then
+    command_stop
+    "$SELF" start
+  fi
+}
+
 case ${1:-} in
   auth) shift; command_auth "$@" ;;
   init) shift; command_init "$@" ;;
@@ -2046,6 +2080,7 @@ case ${1:-} in
   recap) shift; command_recap "$@" ;;
   start) shift; command_start ;;
   stop) shift; command_stop ;;
+  update) shift; command_update "$@" ;;
   _work) shift; command_work "$@" ;;
   _slack) shift; slackc "$@" ;;
   -v|--version|version) echo "agent-relay $VERSION" ;;
