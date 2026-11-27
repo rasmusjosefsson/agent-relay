@@ -142,7 +142,8 @@ struct ConnectorsPane: View {
                 TitleLabel(title: c.title, description: c.ok == nil ? "off" : c.detail)
                 Spacer()
                 if c.builtin == true {
-                    Button(store.slackSigningIn ? "Signing in…" : "Sign in…") {
+                    let signedIn = c.ok == true
+                    Button(store.slackSigningIn ? (signedIn ? "Reconnecting…" : "Signing in…") : (signedIn ? "Reconnect…" : "Sign in…")) {
                         Task { await store.signInToSlack() }
                     }
                     .disabled(store.slackSigningIn)

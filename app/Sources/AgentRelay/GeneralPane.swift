@@ -369,10 +369,11 @@ private struct TextRow: View {
             HStack(spacing: 4) {
                 TextField("", text: $draft, prompt: Text(field.type == "array" ? "comma separated" : "default"))
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 240)
+                    .frame(maxWidth: .infinity)
                     .onChange(of: draft) { _, text in store.edit(field.key, parse(text)) }
                 if !suggestions.isEmpty { SuggestionMenu(items: suggestions, draft: $draft) }
             }
+            .frame(width: 240)
         } label: {
             label
         }

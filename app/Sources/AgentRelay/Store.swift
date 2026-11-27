@@ -147,6 +147,9 @@ final class Store {
                 if let i = connectors?.firstIndex(where: { $0.name == row.name }) { connectors?[i] = row }
             }
         }
+        if rows.contains(where: { $0.builtin == true && $0.ok == true }) {
+            slackAuthError = nil
+        }
     }
 
     /// Restarts Slack once, reads its local session, and stores the token and d cookie.
