@@ -1,6 +1,6 @@
 # slack-relay
 
-Talk to coding agents on your Mac from Slack. Write `!boss …` in a private channel from your phone. A cheap dispatcher answers or starts a worker agent in one of your repos. Workers report back in the same channel or thread and ask you when they need a decision.
+Talk to coding agents on your Mac from Slack. Write `!bot …` in a private channel from your phone. A cheap dispatcher answers or starts a worker agent in one of your repos. Workers report back in the same channel or thread and ask you when they need a decision.
 
 Works with [OpenCode](https://opencode.ai), [Claude Code](https://claude.com/claude-code), and [Pi](https://github.com/badlogic/pi-mono), picked per agent.
 
@@ -63,13 +63,13 @@ slack-relay config set claude_settings '{"sandbox": {"excludedCommands": ["acli 
 
 | You write | What happens |
 |---|---|
-| `!boss what's the time?` | The dispatcher (`dispatcher.label`, `boss` by default) answers, in a fresh session. |
-| `!boss fix the flaky test in client with claude` | The dispatcher starts worker `client` on Claude Code. |
+| `!bot what's the time?` | The dispatcher (`dispatcher.label`, `bot` by default) answers, in a fresh session. |
+| `!bot fix the flaky test in client with claude` | The dispatcher starts worker `client` on Claude Code. |
 | `!client use option 2` | Answers worker `client`'s question, or resumes it once it has finished. |
-| `!boss stop` | Ends every answer the dispatcher is still working on, and its agent. Its thinking post says "Stopped." |
+| `!bot stop` | Ends every answer the dispatcher is still working on, and its agent. Its thinking post says "Stopped." |
 | `!client stop` | Ends worker `client` and its agent. `!client …` picks it up again in the same session. |
-| `!boss …` in the channel | The answer goes to a thread under your message. Keep talking there; the dispatcher sees your earlier messages in it. |
-| `!boss …` inside a thread | The answer goes to that thread. The dispatcher also sees your earlier messages there. |
+| `!bot …` in the channel | The answer goes to a thread under your message. Keep talking there; the dispatcher sees your earlier messages in it. |
+| `!bot …` inside a thread | The answer goes to that thread. The dispatcher also sees your earlier messages there. |
 
 Anything else, like `!hello` or `!oldname hi`, gets no answer: only the dispatcher's name and running or finished workers' names do. Replies show up as `<icon> [name] …`. Jira keys from `jira_projects` become links automatically.
 

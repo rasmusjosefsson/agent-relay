@@ -10,7 +10,7 @@
   "jira_url": "https://acme.atlassian.net",
   "jira_projects": ["ADE"],
   "dispatcher": {
-    "label": "boss",
+    "label": "bot",
     "runner": "opencode",
     "models": {
       "opencode": "github-copilot/claude-haiku-5.5",

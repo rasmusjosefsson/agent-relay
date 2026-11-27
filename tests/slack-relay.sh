@@ -425,7 +425,7 @@ cfgdir="$WORK/cfg"
 export SLACK_RELAY_CONFIG="$cfgdir/config.json"
 out=$("$relay" init --name Ann)
 [[ "$out" == *"user = $ME (from the Slack token)"*"still to set:"*"channel:"* && "$out" != *"  user:"* ]] || fail "init did not fill the user from the token, or list the channel: $out"
-[[ "$("$relay" config get dispatcher.label)" == boss && "$("$relay" config get dispatcher.memory_lines)" == 200 ]] || fail "init defaults"
+[[ "$("$relay" config get dispatcher.label)" == bot && "$("$relay" config get dispatcher.memory_lines)" == 200 ]] || fail "init defaults"
 set +e
 "$relay" init >/dev/null 2>&1; [[ $? -eq 1 ]] || fail "init overwrote an existing config"
 "$relay" config set worker.runner codex >/dev/null 2>&1; [[ $? -eq 1 ]] || fail "accepted an invalid runner"

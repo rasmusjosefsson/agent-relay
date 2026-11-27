@@ -32,7 +32,7 @@ struct ActivityPane: View {
             let recent = conversations.filter { !$0.isActive }.prefix(15)
             Section {
                 if running.isEmpty {
-                    Text("Nothing is running. Write \(store.trigger)\(store.status?.dispatcher.label ?? "boss") … in Slack and it shows up here.")
+                    Text("Nothing is running. Write \(store.trigger)\(store.status?.dispatcher.label ?? "bot") … in Slack and it shows up here.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(running) { conversation($0) }
