@@ -680,4 +680,35 @@ kill "$fake_serve"
 [[ $code -eq 1 && "$out" == *"already running"* ]] || fail "second serve started: $code $out"
 rm -f "$WORK/state/serve.json"
 
+# auth picks a workspace by exact domain, so a shorter name never matches a longer one
+if command -v python3 >/dev/null; then
+  python3 - "$ROOT/bin/slack-relay-auth.py" <<'PY' || fail "auth workspace selection"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("auth", sys.argv[1])
+auth = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(auth)
+teams = [
+    {"name": "Acme Corp", "domain": "acme", "team": "Acme Corp", "url": "https://acme.slack.com/", "user_id": "U1", "token": "a", "cookie": "b"},
+    {"name": "Acme Labs", "domain": "acme-labs", "team": "Acme Labs", "url": "https://acme-labs.slack.com/", "user_id": "U1", "token": "c", "cookie": "d"},
+]
+assert auth.select(teams, "acme", "")["domain"] == "acme"
+assert auth.select(teams, "acme-labs", "")["domain"] == "acme-labs"
+assert auth.select(teams, "https://acme-labs.slack.com/", "")["domain"] == "acme-labs"
+try:
+    auth.select(teams, "", "")
+except auth.AuthError as error:
+    assert "several workspaces" in str(error)
+else:
+    raise AssertionError("several workspaces did not ask for --workspace")
+PY
+
+  # a Slack app that cannot be read fails without writing either file
+  set +e
+  out=$(SLACK_APP_PATH="$WORK/no-such-slack" "$relay" auth --token-file "$WORK/auth.token" --cookie-file "$WORK/auth.cookie" 2>&1)
+  code=$?
+  set -e
+  [[ $code -eq 1 && "$out" == *"SLACK_APP_PATH does not point at a Slack app"* ]] || fail "auth with a bad Slack app: $code $out"
+  [[ ! -e "$WORK/auth.token" && ! -e "$WORK/auth.cookie" ]] || fail "auth wrote a file after failing"
+fi
+
 echo "slack-relay tests passed"

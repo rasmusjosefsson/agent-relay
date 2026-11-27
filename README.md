@@ -22,6 +22,7 @@ Use a private channel with only you in it. Agents' answers can contain anything 
 
 - macOS with `curl`, `jq` 1.6+, `perl`, and bash 4+ (`brew install bash`; the script switches to it when started by the system bash)
 - Your own Slack token in a file: a user token (`xoxp-`), or a browser token (`xoxc-`) plus its `d` cookie in a second file
+- `python3` for `slack-relay auth` (macOS includes it with the Xcode command line tools)
 - At least one of `opencode`, `claude`, `pi`
 
 ## Set up
@@ -38,6 +39,17 @@ slack-relay config set repos.client ~/code/client
 slack-relay doctor
 slack-relay serve 2>>~/.local/state/slack-relay/serve.log
 ```
+
+### Sign in from Slack desktop
+
+When Slack desktop is signed in, `slack-relay auth` reads its browser token and `d` cookie from the local session over CDP and writes them to the configured files, with no Keychain prompt:
+
+```bash
+slack-relay auth                  # the config's channel picks the workspace
+slack-relay auth --workspace acme # when several workspaces are signed in
+```
+
+Slack quits and reopens once while the session is read, and both files are written mode 600. The Mac app's Connectors pane has the same action on the Slack row: **Sign in…**, with a workspace chooser when more than one is signed in.
 
 With Claude Code under a managed sandbox, the agents' shell commands can't reach most hosts or your stored logins. Let a CLI through for every `claude` the relay starts:
 
@@ -88,6 +100,7 @@ Everything an app needs is a file or a JSON command:
 | Logs | `~/.local/state/slack-relay/serve.log`, `workers/<name>.log`; each run's raw agent output in `workers/<name>.events` and `dispatch/<turn>.events` |
 | Agent CLIs | `slack-relay agents --json` → `[{name, installed, version, path, dispatcher, default_worker, dispatcher_model, worker_model, active}]` |
 | Connectors | `slack-relay connectors --json [name…]` → `[{name, title, check, ok, detail}]`; `ok` is null when off, and no token is shown. The first row is Slack itself (`builtin: true`): the token's owner and whether every channel is readable |
+| Sign in to Slack | `slack-relay auth [--workspace W] [--json]` reads the signed-in Slack desktop session over CDP and writes the token and `d` cookie files; Slack restarts once |
 | Channel names | `slack-relay channels --json` → `[{id, name}]` for the configured channels; `name` is null when Slack won't say |
 | Models | `slack-relay models --json [runner…]` → `{runner: [model]}` from each agent CLI's own list; Claude has none, so it gets `haiku`, `sonnet`, `opus` |
 | Speed | `slack-relay speed --json` → `[{runner, model, agent, answers, median, p90, slowest, last}]`, seconds per dispatcher answer from message to reply, newest first. Every answer adds a line to `speed.jsonl` in the state folder, and its turn in `status --json` gets `secs` |

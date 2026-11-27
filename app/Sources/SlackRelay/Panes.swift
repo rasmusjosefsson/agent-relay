@@ -114,6 +114,23 @@ struct ConnectorsPane: View {
         }
         .formStyle(.grouped)
         .task { if store.connectors == nil { await store.checkConnectors() } }
+        .confirmationDialog(
+            "Choose a Slack workspace",
+            isPresented: Binding(
+                get: { store.slackWorkspaces != nil },
+                set: { if !$0 { store.slackWorkspaces = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            ForEach(store.slackWorkspaces ?? []) { workspace in
+                Button(workspace.name) {
+                    Task { await store.signInToSlack(workspace: workspace.selector) }
+                }
+            }
+            Button("Cancel", role: .cancel) { store.slackWorkspaces = nil }
+        } message: {
+            Text("More than one workspace is signed in to Slack. Signing in to the one you pick restarts Slack once more.")
+        }
     }
 
     @ViewBuilder
@@ -124,6 +141,13 @@ struct ConnectorsPane: View {
                 StatusDot(ok: c.ok, checking: checking)
                 TitleLabel(title: c.title, description: c.ok == nil ? "off" : c.detail)
                 Spacer()
+                if c.builtin == true {
+                    Button(store.slackSigningIn ? "Signing in…" : "Sign in…") {
+                        Task { await store.signInToSlack() }
+                    }
+                    .disabled(store.slackSigningIn)
+                    .help("Restarts Slack briefly and reads your local session")
+                }
                 if c.builtin != true {
                     Button(editing == c.name ? "Done" : "Edit") {
                         if editing == c.name { editing = nil } else { editing = c.name; draft = c.check }
@@ -132,6 +156,11 @@ struct ConnectorsPane: View {
                 }
                 Button("Recheck") { Task { await store.checkConnectors([c.name]) } }
                     .disabled(checking)
+            }
+            if c.builtin == true, let error = store.slackAuthError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
             if editing == c.name {
                 TextField("Check command", text: $draft, axis: .vertical)

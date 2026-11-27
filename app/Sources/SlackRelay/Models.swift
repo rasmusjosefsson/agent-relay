@@ -222,6 +222,26 @@ struct Connector: Decodable, Equatable, Identifiable {
     var id: String { name }
 }
 
+/// `slack-relay auth --json` when several workspaces are signed in.
+struct SlackAuthFailure: Decodable {
+    var ok: Bool?
+    var error: String?
+    var workspaces: [SlackWorkspace]?
+}
+
+/// One signed-in Slack team from `slack-relay auth --json`.
+struct SlackWorkspace: Decodable, Equatable, Identifiable {
+    var name: String
+    var domain: String
+    var team: String
+    var url: String
+    var userId: String
+
+    var id: String { domain.isEmpty ? name : domain }
+    /// What `--workspace` takes: the Slack subdomain.
+    var selector: String { domain.isEmpty ? name : domain }
+}
+
 /// `slack-relay memory --json`
 struct Memory: Decodable, Equatable {
     var path: String

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `slack-relay auth` and the app's Connectors → Slack → **Sign in…** read the signed-in Slack desktop session over CDP and save its `xoxc` token and `d` cookie, with no Keychain prompt. Slack restarts once; with several workspaces signed in, `--workspace` picks one and the app asks.
 - Activity shows the messages above your question in its Slack thread (a Datadog alert, say), so you see what the dispatcher answered; click one to read all of it. Answers show their **bold** and `code` instead of the raw Markdown.
 - Markdown tables in an agent's answer become bullets in Slack (`• *first cell*: other · cells`), since Slack shows tables as raw pipes. Agents are also told you read on your phone: lead with the answer, and never point you to a file on the Mac.
 

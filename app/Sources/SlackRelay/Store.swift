@@ -39,6 +39,11 @@ final class Store {
     var channelNames: [String: String?] = [:]
     /// Error from the last `remove`, by worker
     var workerErrors: [String: String] = [:]
+    /// `slack-relay auth` in progress, and what it last said
+    var slackSigningIn = false
+    var slackAuthError: String?
+    /// Set when several Slack workspaces are signed in; the pane asks which one.
+    var slackWorkspaces: [SlackWorkspace]?
 
     private var polling: Task<Void, Never>?
     private let decoder: JSONDecoder = {
@@ -140,6 +145,31 @@ final class Store {
                 if let i = connectors?.firstIndex(where: { $0.name == row.name }) { connectors?[i] = row }
             }
         }
+    }
+
+    /// Restarts Slack once, reads its local session, and stores the token and d cookie.
+    /// With several signed-in teams, leaves the choice in `slackWorkspaces`.
+    func signInToSlack(workspace: String? = nil) async {
+        slackSigningIn = true
+        defer { slackSigningIn = false }
+        slackAuthError = nil
+        var args = ["auth", "--json"]
+        if let workspace, !workspace.isEmpty { args += ["--workspace", workspace] }
+        let result = await cli.run(args, stdin: nil)
+        if result.ok {
+            slackWorkspaces = nil
+            await checkConnectors(["slack"])
+            await loadFields()
+            await refreshStatus()
+            return
+        }
+        if let failure = try? decoder.decode(SlackAuthFailure.self, from: result.stdout),
+           failure.error == "multiple_workspaces",
+           let workspaces = failure.workspaces, !workspaces.isEmpty {
+            slackWorkspaces = workspaces
+            return
+        }
+        slackAuthError = result.message
     }
 
     func loadMemory() async {

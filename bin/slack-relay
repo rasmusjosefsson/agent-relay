@@ -21,6 +21,7 @@ MAX_CHARS=3500
 usage() {
   cat <<'EOF'
 Usage:
+  slack-relay auth     [--workspace W] [--token-file F] [--cookie-file F] [--json]
   slack-relay init     [--channel ID|URL] [--user ID] [--name NAME] [--token-file F] [--cookie-file F] [--force]
   slack-relay config   path | show | schema | fields --json | get <key> | set <key> <value> | unset <key> | apply | validate
   slack-relay doctor   [--json]
@@ -1046,6 +1047,71 @@ config_errors() {
   '
 }
 
+find_python() {
+  local candidate
+  candidate=$(command -v python3 2>/dev/null || true)
+  [[ -n "$candidate" && -x "$candidate" ]] && { printf '%s' "$candidate"; return 0; }
+  [[ -x /usr/bin/python3 ]] && { printf '%s' /usr/bin/python3; return 0; }
+  return 1
+}
+
+# Reads the Slack desktop session over CDP and writes the token and d cookie
+# files. When the config already names a channel, its workspace is used to pick
+# between several signed-in teams; otherwise pass --workspace. Slack restarts
+# once, by itself.
+command_auth() {
+  local workspace="" token_file="" cookie_file="" json=false token_override=false
+  while (( $# )); do
+    case "$1" in
+      --workspace) workspace=${2:-}; shift 2 ;;
+      --token-file) token_file=${2:-}; token_override=true; shift 2 ;;
+      --cookie-file) cookie_file=${2:-}; shift 2 ;;
+      --json) json=true; shift ;;
+      *) usage >&2; exit 2 ;;
+    esac
+  done
+  token_file=${token_file:-$(cfg .slack.token_file)}
+  cookie_file=${cookie_file:-$(cfg .slack.cookie_file)}
+  [[ -n "$token_file" ]] || die "no Slack token file; set slack.token_file or pass --token-file"
+  [[ -n "$cookie_file" ]] || die "no Slack cookie file; set slack.cookie_file or pass --cookie-file"
+  local python helper out channel=""
+  python=$(find_python) || die "auth needs python3; install the Xcode command line tools"
+  helper="$ROOT/bin/slack-relay-auth.py"
+  [[ -r "$helper" ]] || die "missing $helper"
+  # The configured channel is only a hint for choosing the right workspace.
+  [[ -n "$workspace" || ! -r "$CONFIG" ]] || channel=$(cfg .channel)
+  local -a helper_args=(
+    --token-out "$(expand_path "$token_file")"
+    --cookie-out "$(expand_path "$cookie_file")"
+  )
+  [[ -z "$workspace" ]] || helper_args+=(--workspace "$workspace")
+  [[ -z "$channel" ]] || helper_args+=(--channel "$channel")
+  if ! out=$("$python" "$helper" "${helper_args[@]}"); then
+    if [[ "$json" == false && -n "$out" ]] && jq -e '.error == "multiple_workspaces"' >/dev/null 2>&1 <<<"$out"; then
+      echo "several workspaces are signed in:"
+      jq -r '.workspaces[] | "  \(.name) (\(.domain))"' <<<"$out"
+      echo "rerun with: slack-relay auth --workspace <domain>"
+    else
+      [[ -z "$out" ]] || printf '%s\n' "$out"
+    fi
+    exit 1
+  fi
+  local name domain user configured
+  name=$(jq -r '.workspace.name // .workspace.team // "Slack"' <<<"$out")
+  domain=$(jq -r '.workspace.domain // ""' <<<"$out")
+  user=$(jq -r '.workspace.user_id // ""' <<<"$out")
+  if [[ "$json" == true ]]; then
+    printf '%s\n' "$out"
+  else
+    echo "stored the Slack session for $name${domain:+ ($domain)} in $(expand_path "$token_file")"
+    [[ -z "$user" ]] || echo "user = $user"
+  fi
+  if [[ "$token_override" == false && -r "$CONFIG" && -n "$user" ]]; then
+    configured=$(cfg .user)
+    [[ "$configured" == "$user" ]] || command_config set user "$user" >/dev/null
+  fi
+}
+
 command_init() {
   local channel="" user="" name="" token_file="" cookie_file="" force=false
   while (( $# )); do
@@ -1538,6 +1604,7 @@ command_stop() {
 }
 
 case ${1:-} in
+  auth) shift; command_auth "$@" ;;
   init) shift; command_init "$@" ;;
   config) shift; command_config "$@" ;;
   doctor) shift; command_doctor "$@" ;;
