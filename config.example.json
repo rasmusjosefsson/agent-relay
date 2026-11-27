@@ -33,5 +33,11 @@
   "repos": {
     "client": "~/code/client",
     "api": "~/code/api"
+  },
+  "recap": {
+    "github_orgs": ["my-org"],
+    "mood": "brief",
+    "repo_roots": ["~/code"],
+    "langfuse_url": ""
   }
 }

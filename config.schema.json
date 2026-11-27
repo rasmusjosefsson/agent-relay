@@ -226,6 +226,40 @@
       "propertyNames": { "pattern": "^[a-z0-9_-]+$" },
       "additionalProperties": { "type": "string" },
       "default": {}
+    },
+    "recap": {
+      "title": "Work recap",
+      "description": "Scoped work summaries for `!bot recap` and `slack-relay recap`. Only GitHub orgs listed in github_orgs are included; personal repos are never included.",
+      "type": "object",
+      "properties": {
+        "github_orgs": {
+          "title": "GitHub orgs",
+          "description": "Allowlist of GitHub orgs to include in recaps (PRs, local git repos, and Langfuse sessions). Personal repos are never included.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*$" },
+          "default": []
+        },
+        "mood": {
+          "title": "Default mood",
+          "description": "Summary style when not overridden inline: brief (standup-ready), funny (dry 1-liners), or detailed (tickets, files, reviews, investigations).",
+          "type": "string",
+          "enum": ["brief", "funny", "detailed"],
+          "default": "brief"
+        },
+        "repo_roots": {
+          "title": "Extra repo folders",
+          "description": "Folders scanned for local git repos in addition to repos. Only repos whose remote belongs to recap.github_orgs are included.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": []
+        },
+        "langfuse_url": {
+          "title": "Local Langfuse URL",
+          "description": "Base URL for local Langfuse (e.g. http://localhost:3000) to include recent agent investigations. Empty turns Langfuse off.",
+          "type": "string",
+          "default": ""
+        }
+      }
     }
   }
 }

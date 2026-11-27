@@ -63,4 +63,5 @@ Write links as Slack links with a short label (`<https://github.com/org/repo/pul
 - `slack-relay doctor`: checks tools, config, that the Slack token belongs to `user`, the channel, runners, and repos.
 - `slack-relay config set <key> <value>`: validates before saving. Keys use dots (`worker.runner`), values may be JSON (`true`, `200`, `["ADE"]`).
 - `slack-relay status [--json]`: the bridge and every worker; `--json` also lists the dispatcher's answers as `turns`. Logs are in `~/.local/state/slack-relay/` (`serve.log`, `workers/<name>.log`).
+- `slack-relay recap [--since 7d] [--mood brief|funny|detailed] [--raw]`: work recap scoped strictly to `recap.github_orgs` (GitHub PRs, local git repos, optional local Langfuse sessions); also available in Slack as `!bot recap [7d] [funny|brief|detailed] [raw]`.
 - `slack-relay activity <worker|turn>`: the steps its agent took (tools, text, errors). `slack-relay cancel <worker|turn>` stops one, like `!name stop`.
