@@ -107,7 +107,7 @@
           "description": "Write <trigger><name>, or just the trigger.",
           "type": "string",
           "pattern": "^[a-z0-9_-]+$",
-          "default": "boss"
+          "default": "bot"
         },
         "icon": {
           "title": "Icon",
