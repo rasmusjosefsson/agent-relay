@@ -39,7 +39,7 @@ struct GeneralPane: View {
                 rows("Slack", Self.slackKeys, channels: true)
                 rows("Agents", agentRows)
                 rows("Repos", [("repos", nil)])
-                let shown = Set((Self.slackKeys + agentRows + [("repos", nil)]).map(\.0) + ["channel", "channels"])
+                let shown = Set((Self.slackKeys + agentRows + [("repos", nil)]).map(\.0) + ["channel", "channels", "channel_config"])
                 // other runners' models stay editable here
                 let rest = fields.fields.filter { !shown.contains($0.key) }
                 Section {

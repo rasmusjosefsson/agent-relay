@@ -78,6 +78,7 @@ Make it yours in the app's General pane (edit, then Save at the bottom) or with 
 
 - `trigger`: what messages start with, `!` by default. An emoji works too, written as its shortcode (`:zap:`), since that's how Slack sends it.
 - `channels`: more channels to read. Answers go to the channel you wrote in, and each extra channel adds one Slack read per poll.
+- `channel_config`: per-channel overrides keyed by Slack channel ID (`memory_policy`: `explicit`, `ask`, or `auto`; `skills`: list of skills to focus on; `repo`: default repo; `instructions`: extra standing notes). Each channel also gets its own memory file at `<workdir>/memory/<channel-id>.md` alongside global `MEMORY.md`.
 - `dispatcher.icon` and `worker.icon`: a different emoji per role, falling back to `icon`.
 - `show_label`: `false` drops the `[name]` tag.
 - `reply_in_thread`: `false` answers channel messages in the channel instead of a thread under them.
@@ -107,14 +108,14 @@ Everything an app needs is a file or a JSON command:
 | Models | `agent-relay models --json [runner…]` → `{runner: [model]}` from each agent CLI's own list; Claude has none, so it gets `haiku`, `sonnet`, `opus` |
 | Speed | `agent-relay speed --json` → `[{runner, model, agent, answers, median, p90, slowest, last}]`, seconds per dispatcher answer from message to reply, newest first. Every answer adds a line to `speed.jsonl` in the state folder, and its turn in `status --json` gets `secs` |
 | Remove a worker | `agent-relay remove <worker>…` stops it and its child processes if it runs, then deletes its record and log, so `!name` no longer resumes it |
-| Memory | `agent-relay memory --json` → `{path, exists, lines, limit, text}`; `memory set` replaces it from stdin |
+| Memory | `agent-relay memory [--channel <id\|name>] --json` → `{path, exists, lines, limit, text, channel}`; `memory set [--channel <id\|name>]` replaces it from stdin |
 | Start and stop | `agent-relay start` runs `serve` in the background, logging to `serve.log`; `agent-relay stop` ends it. A second `serve` exits with "already running". |
 
 Worker `status` is one of `running`, `waiting` (asked you a question), `done`, `failed`, `stopped` (you wrote `!name stop`), or `died` (process gone without finishing).
 
 ## Mac app
 
-[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Activity lists every dispatcher answer and worker as it runs, with the step its agent is on now, a live feed of every step when you open one, and a Stop button. Workers, Connectors (Slack included), `MEMORY.md`, and `doctor` each have a pane. While the app is open it keeps a menu bar icon: radio waves while the relay is listening, the same mark with a slash while it is stopped. Its menu lists what is running, each with its current step and Stop. Closing the window leaves the icon; Quit removes it. It needs macOS 14 and Xcode.
+[`app/`](app) is a native window over these commands. General starts and stops the relay and holds the everyday settings (channels, trigger, icons, agents and models, repos), with the rest of the schema under Advanced. Activity lists every dispatcher answer and worker as it runs, with the step its agent is on now, a live feed of every step when you open one, and a Stop button. Workers, Connectors (Slack included), Memory (global `MEMORY.md`, per-channel memory, and per-channel settings), and `doctor` each have a pane. While the app is open it keeps a menu bar icon: radio waves while the relay is listening, the same mark with a slash while it is stopped. Its menu lists what is running, each with its current step and Stop. Closing the window leaves the icon; Quit removes it. It needs macOS 14 and Xcode.
 
 ```bash
 app/scripts/bundle.sh   # builds Agent Relay.app into /Applications, reopening it if it was running
@@ -125,8 +126,9 @@ It finds `agent-relay` on your login shell's PATH, then in `~/bin`. `app/.build/
 ## Develop
 
 ```bash
-tests/agent-relay.sh   # routing, workers, config, security, with fake Slack and agent CLIs
+tests/agent-relay.sh   # routing, workers, config, memory, security, with fake Slack and agent CLIs
 tests/slack-api.sh     # the built-in Slack client against a fake curl
+tests/recap.sh         # allowlist-scoped work recap collector and CLI
 ```
 
-Neither test posts to Slack or calls a model.
+None of the tests post to Slack or call a model.

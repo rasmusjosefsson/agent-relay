@@ -34,6 +34,14 @@
     "client": "~/code/client",
     "api": "~/code/api"
   },
+  "channel_config": {
+    "C0123456789": {
+      "memory_policy": "auto",
+      "skills": ["datadog-scout", "clickhouse-scout"],
+      "repo": "client",
+      "instructions": "Focus on production alerts and recurring root causes."
+    }
+  },
   "recap": {
     "github_orgs": ["my-org"],
     "mood": "brief",

@@ -37,6 +37,8 @@ final class Store {
     var models: [String: [String]] = [:]
     /// "#name" or "@handle" (DM) for each saved channel ID, nil when Slack won't tell
     var channelNames: [String: String?] = [:]
+    /// Configured channels in order, with resolved names
+    var channels: [ChannelName] = []
     /// Error from the last `remove`, by worker
     var workerErrors: [String: String] = [:]
     /// `agent-relay auth` in progress, and what it last said
@@ -172,14 +174,49 @@ final class Store {
         slackAuthError = result.message
     }
 
-    func loadMemory() async {
-        memory = decode(Memory.self, await cli.run("memory", "--json"))
+    func loadMemory(channel: String? = nil) async {
+        var args = ["memory", "--json"]
+        if let channel, !channel.isEmpty { args += ["--channel", channel] }
+        memory = decode(Memory.self, await cli.run(args, stdin: nil))
     }
 
-    func saveMemory(_ text: String) async {
-        let result = await cli.run(["memory", "set"], stdin: text)
+    func saveMemory(_ text: String, channel: String? = nil) async {
+        var args = ["memory", "set"]
+        if let channel, !channel.isEmpty { args += ["--channel", channel] }
+        let result = await cli.run(args, stdin: text)
         memoryError = result.ok ? nil : result.message
-        await loadMemory()
+        await loadMemory(channel: channel)
+    }
+
+    func channelConfig(for channelID: String) -> ChannelConfig {
+        guard case .object(let map)? = value("channel_config"),
+              case .object(let raw)? = map[channelID] else { return ChannelConfig() }
+        let policy = raw["memory_policy"]?.string ?? "explicit"
+        var skills: [String] = []
+        if case .array(let items)? = raw["skills"] { skills = items.compactMap(\.string) }
+        let repo = raw["repo"]?.string ?? ""
+        let instructions = raw["instructions"]?.string ?? ""
+        return ChannelConfig(memoryPolicy: policy, skills: skills, repo: repo, instructions: instructions)
+    }
+
+    var repoNames: [String] {
+        guard case .object(let map)? = value("repos") else { return [] }
+        return map.keys.sorted()
+    }
+
+    @discardableResult
+    func saveChannelConfig(_ channelID: String, _ config: ChannelConfig) async -> Bool {
+        let key = "channel_config.\(channelID)"
+        if config.isDefault {
+            await unset(key)
+            return fieldErrors[key] == nil
+        }
+        var dict: [String: Any] = ["memory_policy": config.memoryPolicy]
+        if !config.skills.isEmpty { dict["skills"] = config.skills }
+        if !config.repo.isEmpty { dict["repo"] = config.repo }
+        if !config.instructions.isEmpty { dict["instructions"] = config.instructions }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return false }
+        return await set(key, json: String(decoding: data, as: UTF8.self))
     }
 
     func runDoctor() async {
@@ -245,6 +282,7 @@ final class Store {
         if models.isEmpty, let listed = decode([String: [String]].self, await cli.run("models", "--json")) { models = listed }
         fields = decode(ConfigFields.self, await cli.run("config", "fields", "--json"))
         if let rows = decode([ChannelName].self, await names) {
+            channels = rows
             channelNames = Dictionary(rows.map { ($0.id, $0.label) }, uniquingKeysWith: { first, _ in first })
         }
     }

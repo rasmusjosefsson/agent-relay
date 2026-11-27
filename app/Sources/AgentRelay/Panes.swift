@@ -195,12 +195,44 @@ struct ConnectorsPane: View {
 
 struct MemoryPane: View {
     let store: Store
+    @State private var selectedChannel: String? = nil
     @State private var draft = ""
     @State private var loaded: String?
+    @State private var policy = "explicit"
+    @State private var skillsText = ""
+    @State private var repo = ""
+    @State private var instructions = ""
+    @State private var savingSettings = false
+
+    private var draftChannelConfig: ChannelConfig {
+        ChannelConfig(
+            memoryPolicy: policy,
+            skills: skillsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
+            repo: repo.trimmingCharacters(in: .whitespaces),
+            instructions: instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
+    private func syncChannelSettings() {
+        guard let channelID = selectedChannel else { return }
+        let cfg = store.channelConfig(for: channelID)
+        policy = cfg.memoryPolicy
+        skillsText = cfg.skills.joined(separator: ", ")
+        repo = cfg.repo
+        instructions = cfg.instructions
+    }
 
     var body: some View {
         Form {
             PaneHeader(item: .memory)
+            Section {
+                Picker("Scope", selection: $selectedChannel) {
+                    Text("Global (MEMORY.md)").tag(String?.none)
+                    ForEach(store.channels, id: \.id) { ch in
+                        Text(ch.label.map { "\($0) (\(ch.id))" } ?? ch.id).tag(Optional(ch.id))
+                    }
+                }
+            }
             if let memory = store.memory {
                 let lines = draft.isEmpty ? 0 : draft.split(separator: "\n", omittingEmptySubsequences: false).count
                 Section {
@@ -214,15 +246,18 @@ struct MemoryPane: View {
                                 .foregroundStyle(lines > memory.limit ? .red : .secondary)
                         }
                     } label: {
-                        TitleLabel(title: "MEMORY.md", description: memory.exists ? memory.path.abbreviatingHome : "Not created yet; the dispatcher writes it when it learns something.")
+                        let title = selectedChannel.map { "\($0).md" } ?? "MEMORY.md"
+                        TitleLabel(title: title, description: memory.exists ? memory.path.abbreviatingHome : "Not created yet; the dispatcher writes it when it learns something.")
                     }
                     TextEditor(text: $draft)
                         .font(.body.monospaced())
-                        .frame(minHeight: 280)
+                        .frame(minHeight: 240)
                         .scrollContentBackground(.hidden)
                         .overlay(alignment: .topLeading) {
                             if draft.isEmpty {
-                                Text("Empty. Notes the dispatcher should remember across messages go here.")
+                                Text(selectedChannel == nil
+                                     ? "Empty. Standing notes loaded in every channel go here."
+                                     : "Empty. Notes specific to this channel go here.")
                                     .foregroundStyle(.tertiary)
                                     .padding(.top, 1)
                                     .padding(.leading, 5)
@@ -238,7 +273,7 @@ struct MemoryPane: View {
                         }
                         Spacer()
                         Button("Revert") { draft = memory.text }.disabled(draft == memory.text)
-                        Button("Save") { Task { await store.saveMemory(draft) } }
+                        Button("Save") { Task { await store.saveMemory(draft, channel: selectedChannel) } }
                             .buttonStyle(.borderedProminent)
                             .disabled(draft == memory.text)
                             .keyboardShortcut("s", modifiers: .command)
@@ -247,9 +282,68 @@ struct MemoryPane: View {
             } else {
                 Section { ProgressView().frame(maxWidth: .infinity) }
             }
+            if let channelID = selectedChannel {
+                let savedCfg = store.channelConfig(for: channelID)
+                let dirty = draftChannelConfig != savedCfg
+                let repos = ([""] + store.repoNames + (repo.isEmpty || store.repoNames.contains(repo) ? [] : [repo]))
+                Section("Channel settings") {
+                    Picker("Memory policy", selection: $policy) {
+                        Text("Explicit only").tag("explicit")
+                        Text("Ask before saving").tag("ask")
+                        Text("Auto-save durable learnings").tag("auto")
+                    }
+                    LabeledContent("Skills") {
+                        TextField("", text: $skillsText, prompt: Text("datadog-scout, clickhouse-scout"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                    }
+                    Picker("Default repo", selection: $repo) {
+                        ForEach(repos, id: \.self) { name in
+                            Text(name.isEmpty ? "None" : name).tag(name)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Instructions")
+                        TextField("Standing instructions for this channel…", text: $instructions, axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .lineLimit(2...5)
+                    }
+                    if let error = store.fieldErrors["channel_config.\(channelID)"] {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                    HStack {
+                        Spacer()
+                        if savingSettings { ProgressView().controlSize(.small) }
+                        Button("Revert") { syncChannelSettings() }
+                            .disabled(!dirty || savingSettings)
+                        Button("Save settings") {
+                            Task {
+                                savingSettings = true
+                                defer { savingSettings = false }
+                                _ = await store.saveChannelConfig(channelID, draftChannelConfig)
+                                syncChannelSettings()
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!dirty || savingSettings)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
-        .task { await store.loadMemory() }
+        .task {
+            if store.fields == nil { await store.loadFields() }
+            await store.loadMemory(channel: selectedChannel)
+            syncChannelSettings()
+        }
+        .onChange(of: selectedChannel) { _, channel in
+            loaded = nil
+            draft = ""
+            syncChannelSettings()
+            Task { await store.loadMemory(channel: channel) }
+        }
         .onChange(of: store.memory?.text, initial: true) { _, text in
             // Take the file's text unless there are unsaved edits
             guard let text else { return }
