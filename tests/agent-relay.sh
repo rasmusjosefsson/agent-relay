@@ -871,4 +871,35 @@ AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000701.000000 "$relay" serve 2>/dev/nul
 grep -Fq "ask before saving it" "$WORK/opencode-args.log" || fail "dispatch prompt missing ask memory_policy"
 "$relay" config unset channel_config.C0000000001 >/dev/null
 
+# update: refuses dirty checkout, fast-forwards a clean checkout on main, skips app when --no-app
+upd_origin="$WORK/upd-origin.git"
+upd_clone="$WORK/upd-clone"
+git init --bare -b main "$upd_origin" >/dev/null 2>&1
+git clone "$upd_origin" "$upd_clone" >/dev/null 2>&1
+mkdir -p "$upd_clone/bin"
+cp "$ROOT/bin/agent-relay" "$upd_clone/bin/agent-relay"
+cp "$ROOT/config.schema.json" "$upd_clone/config.schema.json"
+chmod +x "$upd_clone/bin/agent-relay"
+git -C "$upd_clone" config user.email test@example.com
+git -C "$upd_clone" config user.name Test
+git -C "$upd_clone" add . && git -C "$upd_clone" commit -m init >/dev/null && git -C "$upd_clone" push -u origin main >/dev/null 2>&1
+# dirty checkout is refused
+echo dirty >"$upd_clone/dirty.txt"
+set +e
+out=$(AGENT_RELAY_APP_DIR="$WORK/no-apps" "$upd_clone/bin/agent-relay" update --no-app 2>&1); code=$?
+set -e
+[[ $code -eq 1 && "$out" == *"uncommitted changes"* ]] || fail "update allowed dirty checkout: $code $out"
+rm -f "$upd_clone/dirty.txt"
+# push a new commit to origin from a second clone, then update from a feature branch
+upd_push="$WORK/upd-push"
+git clone "$upd_origin" "$upd_push" >/dev/null 2>&1
+git -C "$upd_push" config user.email test@example.com
+git -C "$upd_push" config user.name Test
+echo next >"$upd_push/README.md"
+git -C "$upd_push" add README.md && git -C "$upd_push" commit -m next >/dev/null && git -C "$upd_push" push >/dev/null 2>&1
+git -C "$upd_clone" checkout -b old-feature >/dev/null 2>&1
+out=$(AGENT_RELAY_APP_DIR="$WORK/no-apps" "$upd_clone/bin/agent-relay" update --no-app 2>&1)
+[[ "$out" == *"updated "* && -f "$upd_clone/README.md" && "$(git -C "$upd_clone" symbolic-ref --short HEAD)" == main ]] \
+  || fail "update did not switch to main and fast-forward: $out"
+
 echo "agent-relay tests passed"
