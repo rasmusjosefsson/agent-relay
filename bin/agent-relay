@@ -211,6 +211,7 @@ slackc() {
     whoami) slack_api GET auth.test | jq -r '.user_id' ;;
     url) slack_api GET auth.test | jq -r '.url // empty' ;;
     info) slack_info "$1" ;;
+    user) slack_user "$1" ;;
     *) die "unknown slack action $action" ;;
   esac
 }
@@ -266,6 +267,36 @@ slack_info() {
     return
   fi
   slack_api GET users.info "user=$user" | jq -r '.user | ((.profile.display_name // "") | if . == "" then null else . end) // .name // empty | "@" + .'
+}
+
+# A user's readable name: real name, else display name, else username.
+slack_user() {
+  slack_api GET users.info "user=$1" | jq -r '.user | ((.profile.real_name // .real_name // "") | if . == "" then null else . end) // ((.profile.display_name // "") | if . == "" then null else . end) // .name // empty'
+}
+
+# Formats a Slack user ID with their name when known: "Ada Lovelace (U01…)".
+user_label() {
+  local id=$1 name
+  [[ -n "$id" ]] || { printf '(unset)'; return; }
+  name=$(slackc user "$id" 2>/dev/null || true)
+  if [[ -n "$name" ]]; then
+    printf '%s (%s)' "$name" "$id"
+  else
+    printf '%s' "$id"
+  fi
+}
+
+# Formats a channel ID with its Slack name when known: "#general (C01…)" or "@handle (D01…)".
+channel_label() {
+  local id=$1 name
+  name=$(slackc info "$id" 2>/dev/null || true)
+  if [[ -z "$name" ]]; then
+    printf '%s' "$id"
+  elif [[ "$name" == @* ]]; then
+    printf '%s (%s)' "$name" "$id"
+  else
+    printf '#%s (%s)' "$name" "$id"
+  fi
 }
 
 slack_rows() {
@@ -1601,15 +1632,16 @@ command_doctor() {
   fi
   local owner
   if owner=$(slackc whoami 2>&1); then
-    if [[ "$owner" == "$ME" ]]; then check "slack login" true "token belongs to $owner"
-    else check "slack login" false "token belongs to $owner, not the configured user ${ME:-(unset)}"; fi
+    if [[ "$owner" == "$ME" ]]; then check "slack login" true "token belongs to $(user_label "$owner")"
+    else check "slack login" false "token belongs to $(user_label "$owner"), not the configured user $(user_label "$ME")"; fi
   else
     check "slack login" false "$owner"
   fi
-  local id
+  local id label
   for id in $(channels); do
-    if slackc history "$id" 1 >/dev/null 2>&1; then check "channel readable" true "$id"
-    else check "channel readable" false "cannot read channel $id"; fi
+    label=$(channel_label "$id")
+    if slackc history "$id" 1 >/dev/null 2>&1; then check "channel readable" true "$label"
+    else check "channel readable" false "cannot read channel $label"; fi
   done
   [[ -n "$(channels)" ]] || check "channel readable" false "no channel configured"
   for runner in $(printf '%s\n' "$(cfg .dispatcher.runner)" "$(cfg .worker.runner)" | sort -u); do
@@ -1799,15 +1831,22 @@ connector_detail() {
 
 # The built-in slack connector: the token is the configured user's and every channel reads.
 slack_check() {
-  local owner id n=0
+  local owner owner_name me_name id n=0
   owner=$(slackc whoami 2>&1) || { printf '%s\n' "$owner"; return 1; }
-  [[ "$owner" == "$ME" ]] || { echo "token belongs to $owner, not the configured user ${ME:-(unset)}"; return 1; }
+  owner_name=$(slackc user "$owner" 2>/dev/null || true)
+  owner_name=${owner_name:-$owner}
+  if [[ "$owner" != "$ME" ]]; then
+    me_name=""
+    [[ -z "$ME" ]] || me_name=$(slackc user "$ME" 2>/dev/null || true)
+    echo "token belongs to $owner_name, not the configured user ${me_name:-${ME:-(unset)}}"
+    return 1
+  fi
   for id in $(channels); do
-    slackc history "$id" 1 >/dev/null 2>&1 || { echo "signed in as $owner, but cannot read channel $id"; return 1; }
+    slackc history "$id" 1 >/dev/null 2>&1 || { echo "signed in as $owner_name, but cannot read channel $(channel_label "$id")"; return 1; }
     n=$((n + 1))
   done
-  (( n )) || { echo "signed in as $owner, but no channel is configured"; return 1; }
-  echo "signed in as $owner, $n channel$( (( n == 1 )) || echo s) readable"
+  (( n )) || { echo "signed in as $owner_name, but no channel is configured"; return 1; }
+  echo "signed in as $owner_name, $n channel$( (( n == 1 )) || echo s) readable"
 }
 
 connectors_json() {

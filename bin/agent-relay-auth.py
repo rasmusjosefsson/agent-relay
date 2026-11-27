@@ -41,6 +41,13 @@ class AuthError(Exception):
     pass
 
 
+class MultipleWorkspacesError(AuthError):
+    def __init__(self, sessions):
+        names = ", ".join(f"{s.get('name') or s.get('team')} ({s.get('domain') or '?'})" for s in sessions)
+        super().__init__(f"several workspaces are signed in: {names}; pass --workspace <domain>")
+        self.sessions = sessions
+
+
 def note(message):
     print(f"agent-relay auth: {message}", file=sys.stderr)
 
@@ -422,8 +429,7 @@ def select(sessions, workspace, channel):
         return sessions[0]
     if not sessions:
         raise AuthError("Slack did not authenticate; sign in to Slack and rerun")
-    names = ", ".join(f"{s.get('name') or s.get('team')} ({s.get('domain') or '?'})" for s in sessions)
-    raise AuthError(f"several workspaces are signed in: {names}; pass --workspace <domain>")
+    raise MultipleWorkspacesError(sessions)
 
 
 def workspace_row(item):
@@ -524,15 +530,15 @@ def main():
         if not sessions:
             raise AuthError("Slack's token and cookie did not authenticate; sign in to Slack and rerun")
 
-        if not args.workspace and not args.channel and len(sessions) > 1:
+        try:
+            chosen = select(sessions, args.workspace, args.channel)
+        except MultipleWorkspacesError as error:
             print(json.dumps({
                 "ok": False,
                 "error": "multiple_workspaces",
-                "workspaces": [workspace_row(item) for item in sessions],
+                "workspaces": [workspace_row(item) for item in error.sessions],
             }))
             sys.exit(2)
-
-        chosen = select(sessions, args.workspace, args.channel)
         write_secret(args.token_out, chosen["token"])
         write_secret(args.cookie_out, chosen["cookie"])
         output = {

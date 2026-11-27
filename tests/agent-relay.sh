@@ -32,6 +32,7 @@ case $1 in
   whoami) echo "$FAKE_WHOAMI" ;;
   url) echo "https://acme.slack.com/" ;;
   info) [[ "$2" == C0000000001 ]] && echo relay-test || exit 1 ;;
+  user) [[ "$2" == "$FAKE_WHOAMI" ]] && echo "Rasmus Test" || exit 1 ;;
   *) exit 9 ;;
 esac
 FAKE
@@ -524,6 +525,8 @@ set +e
 doctor=$("$relay" doctor --json)
 set -e
 jq -e 'map(.check) | index("config valid") != null and index("slack login") != null' <<<"$doctor" >/dev/null || fail "doctor --json: $doctor"
+jq -e '.[] | select(.check == "slack login") | .detail == "token belongs to Rasmus Test ('"$ME"')"' <<<"$doctor" >/dev/null || fail "doctor slack login lacks user name: $doctor"
+jq -e '.[] | select(.check == "channel readable") | .detail == "#relay-test (C0000000001)"' <<<"$doctor" >/dev/null || fail "doctor channel lacks name: $doctor"
 jq -e '.[] | select(.check | startswith("repo client")) | .ok' <<<"$doctor" >/dev/null || fail "doctor did not check repos: $doctor"
 
 # agents, connectors, memory, and start/stop, for an app
@@ -606,7 +609,7 @@ wait "$busy" 2>/dev/null || true
 "$relay" remove nope 2>/dev/null && fail "removed a worker that doesn't exist"
 "$relay" remove ../config 2>/dev/null && fail "remove accepted a path"
 slack=$("$relay" connectors --json slack)
-jq -e '. == [{name: "slack", title: "Slack", check: "", builtin: true, ok: true, detail: "signed in as '"$ME"', 2 channels readable"}]' <<<"$slack" >/dev/null || fail "slack connector: $slack"
+jq -e '. == [{name: "slack", title: "Slack", check: "", builtin: true, ok: true, detail: "signed in as Rasmus Test, 2 channels readable"}]' <<<"$slack" >/dev/null || fail "slack connector: $slack"
 names=$("$relay" channels --json)
 jq -e '. == [{id: "C0000000001", name: "relay-test"}, {id: "C0000000002", name: null}]' <<<"$names" >/dev/null || fail "channel names: $names"
 "$relay" config set worker.icon '":zap:"' >/dev/null 2>&1 && fail "accepted an icon starting with the trigger"
@@ -765,10 +768,19 @@ assert auth.select(teams, "acme-labs", "")["domain"] == "acme-labs"
 assert auth.select(teams, "https://acme-labs.slack.com/", "")["domain"] == "acme-labs"
 try:
     auth.select(teams, "", "")
-except auth.AuthError as error:
+except auth.MultipleWorkspacesError as error:
     assert "several workspaces" in str(error)
+    assert [s["domain"] for s in error.sessions] == ["acme", "acme-labs"]
 else:
     raise AssertionError("several workspaces did not ask for --workspace")
+# channel shared across workspaces (e.g. Enterprise Grid) still surfaces multiple_workspaces for the picker
+auth.api = lambda method, params, token, cookie: {"ok": True, "channel": {"id": params["channel"]}}
+try:
+    auth.select(teams, "", "C0000000001")
+except auth.MultipleWorkspacesError as error:
+    assert [s["domain"] for s in error.sessions] == ["acme", "acme-labs"]
+else:
+    raise AssertionError("shared channel did not raise MultipleWorkspacesError")
 PY
 
   # a Slack app that cannot be read fails without writing either file

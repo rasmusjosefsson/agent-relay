@@ -69,7 +69,13 @@ case "$endpoint" in
       response='{"ok":true,"channel":{"id":"C0000000001","name":"relay-test"}}'
     fi
     ;;
-  users.info) response='{"ok":true,"user":{"id":"U0OTHER001","name":"other.person","profile":{"display_name":""}}}' ;;
+  users.info)
+    if [[ " ${params[*]} " == *" user=U0123456789 "* ]]; then
+      response='{"ok":true,"user":{"id":"U0123456789","name":"ada","profile":{"real_name":"Ada Lovelace","display_name":"ada"}}}'
+    else
+      response='{"ok":true,"user":{"id":"U0OTHER001","name":"other.person","profile":{"display_name":""}}}'
+    fi
+    ;;
   *) exit 94 ;;
 esac
 printf '%s' "$response" >"$out"
@@ -85,6 +91,8 @@ tab=$'\t'
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ "$("$relay" _slack whoami)" == U0123456789 ]] || fail "whoami"
+[[ "$("$relay" _slack user U0123456789)" == "Ada Lovelace" ]] || fail "user real name"
+[[ "$("$relay" _slack user U0OTHER001)" == "other.person" ]] || fail "user fallback name"
 [[ "$("$relay" _slack info C0000000001)" == relay-test ]] || fail "channel name"
 jq '.channels = ["D0000000001"]' "$WORK/config.json" >"$WORK/dm.json"
 dm=$(AGENT_RELAY_CONFIG="$WORK/dm.json" "$relay" _slack info D0000000001)
