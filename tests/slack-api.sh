@@ -121,6 +121,10 @@ thread=$("$relay" _slack thread C0000000001 200.000 50)
 grep -Fxq 'POST chat.postMessage channel=C0000000001 text=hello & <you>' "$FAKE_LOG" || fail "send: $(tail -n 1 "$FAKE_LOG")"
 "$relay" _slack send C0000000001 "in thread" 200.000 >/dev/null
 grep -Fxq 'POST chat.postMessage channel=C0000000001 text=in thread thread_ts=200.000' "$FAKE_LOG" || fail "thread send: $(tail -n 1 "$FAKE_LOG")"
+"$relay" _slack send C0000000001 "token xoxb""-1111-2222-rawApiSecret" - >/dev/null
+grep -Fxq 'POST chat.postMessage channel=C0000000001 text=token [REDACTED]' "$FAKE_LOG" || fail "raw send did not scrub secret: $(tail -n 1 "$FAKE_LOG")"
+"$relay" _slack update C0000000001 400.000 "key AKIA""IOSFODNN7EXAMPLE"
+grep -Fxq 'POST chat.update channel=C0000000001 ts=400.000 text=key [REDACTED] parse=none' "$FAKE_LOG" || fail "raw update did not scrub secret: $(tail -n 1 "$FAKE_LOG")"
 
 jq '.slack.cookie_file = ""' "$WORK/config.json" >"$WORK/c.json" && mv "$WORK/c.json" "$WORK/config.json"
 set +e

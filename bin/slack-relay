@@ -114,6 +114,11 @@ slackc() {
   if [[ "$1" == history || "$1" == thread || "$1" == send || "$1" == update || "$1" == info ]] && ! channels | grep -Fxq -- "${2#id:}"; then
     die "channel ${2#id:} is not in the config (channel, channels); refusing to touch it"
   fi
+  if [[ "$1" == send ]]; then
+    set -- "$1" "$2" "$(scrub_secrets <<<"$3")" "${@:4}"
+  elif [[ "$1" == update ]]; then
+    set -- "$1" "$2" "$3" "$(scrub_secrets <<<"$4")" "${@:5}"
+  fi
   if [[ -n "${SLACK_RELAY_SLACK_BIN:-}" ]]; then
     "$SLACK_RELAY_SLACK_BIN" "$@"
     return
@@ -271,13 +276,32 @@ slackify() {
       fi
 }
 
+# Redacts common credentials, tokens, private keys, and secret assignments before text leaves for Slack.
+scrub_secrets() {
+  perl -0777 -pe '
+    s/-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----.*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/[REDACTED]/gs;
+    s/-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----(?:\r?\n(?:[A-Za-z0-9+\/=]{16,}|[A-Za-z0-9-]+:[ \t]*[^\r\n]*|[ \t]*))*/[REDACTED]/gs;
+    s/\bxox[a-zA-Z](?:\.[a-zA-Z0-9]+)?-[A-Za-z0-9._%+=\/-]{8,}/[REDACTED]/g;
+    s/\bxapp-\d+-[A-Za-z0-9-]{8,}/[REDACTED]/g;
+    s/\bgh[pousr]_[A-Za-z0-9_]{16,}\b/[REDACTED]/g;
+    s/\bgithub_pat_[A-Za-z0-9_]{16,}\b/[REDACTED]/g;
+    s/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/[REDACTED]/g;
+    s/\bsk-ant-[A-Za-z0-9_-]{10,}/[REDACTED]/g;
+    s/\bsk-[A-Za-z0-9_-]{20,}/[REDACTED]/g;
+    s/\b(Bearer[ \t]+)(?:(?=[A-Za-z0-9._~+\/=-]*[0-9._~+\/=-])[A-Za-z0-9._~+\/=-]{8,}|[A-Za-z0-9._~+\/=-]{24,})/${1}[REDACTED]/gi;
+    s/\b((?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp):\/\/[^\/\s:@]*:)([^\/\s@]+)(@)/${1}[REDACTED]${3}/gi;
+    s/\b((?:Set-)?Cookie[ \t]*[:=][ \t]*(?:["\x27])?)([^\r\n"\x27]*=[^\r\n"\x27]*)/${1}[REDACTED]/gi;
+    s/(["\x27]?\b(?:[A-Za-z0-9_.-]*[_.-])?(?:password|passwd|pwd|secret|api_?key|access_?key|secret_?access_?key|auth_?token|access_?token|refresh_?token|client_?secret|private_?key|token)["\x27]?[ \t]*[:=][ \t]*)(?:("(?!\[REDACTED\]|\$|true"|false"|null"|none")[^"\r\n]+")|(\x27(?!\[REDACTED\]|\$|true\x27|false\x27|null\x27|none\x27)[^\x27\r\n]+\x27)|((?!\[REDACTED\]|\$|<[^>]*>|(?:true|false|null|none)\b|["\x27])[^\s,;)\]\r\n]+))/defined $2 ? "${1}\"[REDACTED]\"" : defined $3 ? "${1}\x27[REDACTED]\x27" : "${1}[REDACTED]"/gie;
+  '
+}
+
 # Posts to the channel, or into SLACK_RELAY_THREAD when set, and prints the post's ts.
 # With a ts as $4 it rewrites that post instead, posting anew if Slack won't edit it.
 post() {
   local icon tag="" text
   if [[ "$2" == "$(cfg .dispatcher.label)" ]]; then icon=$(cfg .dispatcher.icon); else icon=$(cfg .worker.icon); fi
   [[ "$(config_json | jq .show_label)" == false ]] || tag=" [$2]"
-  text="${icon:-$(cfg .icon)}$tag $(slackify <<<"$3")"
+  text="${icon:-$(cfg .icon)}$tag $(scrub_secrets <<<"$3" | slackify)"
   if [[ -n "${4:-}" ]] && slackc update "$1" "$4" "$text" >/dev/null 2>&1; then
     printf '%s\n' "$4"
     return

@@ -62,6 +62,11 @@ if [[ $last_line == *"table it"* ]]; then
   jq -nc --arg t "$t" '{type: "text", part: {text: $t}}'
   exit 0
 fi
+if [[ $last_line == *"leak it"* ]]; then
+  t="Config dump: xoxb""-1234567890-1234567890-secretTokenVal ghp""_1234567890abcdef1234567890abcdef1234 Bearer eyJhbGciOi.payload.sig DB_PASSWORD=hunter2"
+  jq -nc --arg t "$t" '{type: "text", part: {text: $t}}'
+  exit 0
+fi
 jq -nc --arg t "fake: $last_line" '{type: "text", part: {text: $t}}'
 FAKE
 chmod +x "$WORK/bin/slack" "$WORK/bin/opencode"
@@ -248,6 +253,70 @@ SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000047.500000 "$relay" serve 2>/dev/nul
 grep -Fq "• *QA-1*: timed out" "$WORK/sent.tsv" || fail "table row not a bullet: $(sent)"
 grep -Fq "• *QA-2*: flaky · retried" "$WORK/sent.tsv" || fail "three-cell row: $(sent)"
 ! grep -Fq -- "---" "$WORK/sent.tsv" || fail "table separator leaked: $(sent)"
+
+# outbound secret scrubbing: tokens, keys, PEM blocks, Bearer headers, cookies, and passwords are redacted
+rm -f "$WORK/sent.tsv"
+# Build synthetic tokens at runtime so secret scanners / GitHub push protection don't flag the test file.
+p_xoxp="xoxp""-1111111111-2222222222-secretSlackTok"
+p_xoxc="xoxc""-9999999999-clientSecretTok"
+p_xoxd="xoxd""-cookie%2Fsecret%3Dval"
+p_ghp="ghp""_abcdefghijklmnopqrstuvwxyz1234567890"
+p_ghpat="github_pat""_11ABCDEFG_0123456789abcdef"
+p_akia="AKIA""IOSFODNN7EXAMPLE"
+p_asia="ASIA""IOSFODNN7EXAMPLE"
+p_skant="sk-ant""-api03-abcdef1234567890xyz"
+p_sk="sk-proj""-1234567890abcdefghij1234"
+p_pem_beg="-----BEGIN RSA ""PRIVATE KEY-----"
+p_pem_end="-----END RSA ""PRIVATE KEY-----"
+secret_msg=$(cat <<MSG
+slack: $p_xoxp $p_xoxc $p_xoxd
+github: $p_ghp $p_ghpat
+aws: $p_akia $p_asia
+api: $p_skant $p_sk
+auth: Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig (Bearer authentication is required)
+cookie: Cookie: d=mysecretcookie; sid=abc123
+assign: DB_PASSWORD=hunter2 "password": "topsecret" API_KEY="key-val-999" slack.token_file: ~/.config/token PASSWORD="" GITHUB_TOKEN=\$MY_TOKEN
+url: https://admin:urlsecret@example.com/api
+$p_pem_beg
+MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7Mhg
+$p_pem_end
+MSG
+)
+"$relay" post id:C0000000001 sec "$secret_msg" >/dev/null
+out=$(sent)
+for leaked in \
+  secretSlackTok clientSecretTok cookie%2Fsecret \
+  abcdefghijklmnopqrstuvwxyz1234567890 11ABCDEFG_0123456789 \
+  "$p_akia" "$p_asia" \
+  abcdef1234567890xyz 1234567890abcdefghij1234 \
+  eyJhbGciOiJIUzI1NiJ9 mysecretcookie hunter2 topsecret key-val-999 urlsecret \
+  "BEGIN RSA" MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn; do
+  [[ "$out" != *"$leaked"* ]] || fail "secret leaked in post: $leaked in $out"
+done
+grep -Fq "[REDACTED]" <<<"$out" || fail "expected [REDACTED] in scrubbed post: $out"
+grep -Fq "Bearer [REDACTED]" <<<"$out" || fail "Bearer token not redacted cleanly: $out"
+grep -Fq "Bearer authentication is required" <<<"$out" || fail "normal Bearer prose was redacted: $out"
+grep -Fq "slack.token_file: ~/.config/token" <<<"$out" || fail "token_file path was redacted: $out"
+grep -Fq 'PASSWORD=""' <<<"$out" || fail "empty password assignment was redacted: $out"
+grep -Fq 'GITHUB_TOKEN=$MY_TOKEN' <<<"$out" || fail "env var reference was redacted: $out"
+grep -Fq "https://admin:[REDACTED]@example.com/api" <<<"$out" || fail "URL credential not redacted cleanly: $out"
+
+# worker ask scrubs secrets before posting
+rm -f "$WORK/sent.tsv"
+history "1700000048.500000${tab}id:C0000000001${tab}$ME${tab}@bot sec ok"
+"$relay" ask id:C0000000001 sec "rotate xoxb""-1111-2222-askSecretToken and cookie=\"d=askCookieVal\"?" --timeout 1 >/dev/null 2>&1 || true
+[[ "$(sent)" != *"askSecretToken"* && "$(sent)" != *"askCookieVal"* ]] || fail "secret leaked in ask: $(sent)"
+grep -Fq "[REDACTED]" "$WORK/sent.tsv" || fail "ask did not redact secrets: $(sent)"
+
+# dispatcher reply (posted via placeholder edit) scrubs secrets before reaching Slack
+rm -f "$WORK/sent.tsv" "$WORK/updates.tsv"
+history "1700000049.000000${tab}id:C0000000001${tab}$ME${tab}@bot mac leak it"
+SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000048.800000 "$relay" serve 2>/dev/null
+for leaked in secretTokenVal 1234567890abcdef1234567890 eyJhbGciOi hunter2; do
+  [[ "$(sent)" != *"$leaked"* ]] || fail "secret leaked in dispatcher reply: $leaked in $(sent)"
+  [[ "$(cat "$WORK/updates.tsv" 2>/dev/null)" != *"$leaked"* ]] || fail "secret leaked in dispatcher update: $leaked"
+done
+grep -Fq "[REDACTED]" "$WORK/sent.tsv" || fail "dispatcher reply not redacted: $(sent)"
 ! grep -Fq "| Test |" "$WORK/sent.tsv" || fail "table header leaked: $(sent)"
 
 # a failing opencode run reports the error from its JSON output, which is all it gives
