@@ -39,7 +39,7 @@ final class Store {
     var channelNames: [String: String?] = [:]
     /// Error from the last `remove`, by worker
     var workerErrors: [String: String] = [:]
-    /// `slack-relay auth` in progress, and what it last said
+    /// `agent-relay auth` in progress, and what it last said
     var slackSigningIn = false
     var slackAuthError: String?
     /// Set when several Slack workspaces are signed in; the pane asks which one.
@@ -128,7 +128,7 @@ final class Store {
             if status != self.status { self.status = status }
             statusError = nil
         } else {
-            statusError = result.message.isEmpty ? "slack-relay status failed" : result.message
+            statusError = result.message.isEmpty ? "agent-relay status failed" : result.message
         }
     }
 

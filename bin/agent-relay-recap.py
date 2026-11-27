@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect allowlist-scoped work activity for `slack-relay recap` and `!bot recap`.
+"""Collect allowlist-scoped work activity for `agent-relay recap` and `!bot recap`.
 
 Sources (strictly filtered to `recap.github_orgs`; personal repos are never included):
   1. GitHub (`gh`): merged PRs authored by @me since the lookback window + open PRs (CI & review state)
@@ -881,7 +881,7 @@ def build_recap(config, since_spec=None, now=None):
     if not orgs:
         raise RecapError(
             "recap.github_orgs is empty; configure at least one GitHub org "
-            "(e.g. slack-relay config set recap.github_orgs '[\"my-org\"]')"
+            "(e.g. agent-relay config set recap.github_orgs '[\"my-org\"]')"
         )
 
     ref_now = now if now is not None else local_now()
@@ -901,7 +901,7 @@ def build_recap(config, since_spec=None, now=None):
             allowed_repo_index.setdefault(slug.lower(), slug)
             allowed_repo_index.setdefault(slug.split("/", 1)[1].lower(), slug)
 
-    langfuse_url = os.environ.get("SLACK_RELAY_LANGFUSE_URL") or recap_cfg.get("langfuse_url") or ""
+    langfuse_url = os.environ.get("AGENT_RELAY_LANGFUSE_URL") or recap_cfg.get("langfuse_url") or ""
     langfuse_sessions = collect_langfuse(
         langfuse_url, orgs, since_dt, allowed_repo_index, jira_projects, warnings
     )
@@ -923,7 +923,7 @@ def build_recap(config, since_spec=None, now=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Collect scoped work recap data")
-    parser.add_argument("--config-json", required=True, help="Effective slack-relay config as JSON string")
+    parser.add_argument("--config-json", required=True, help="Effective agent-relay config as JSON string")
     parser.add_argument("--since", default="", help="Lookback window (e.g. yesterday, today, 24h, 7d, 2w, YYYY-MM-DD)")
     parser.add_argument("--format", choices=("raw", "json"), default="json")
     parser.add_argument("--now", default="", help="Override current time (ISO-8601, for tests)")
@@ -932,13 +932,13 @@ def main():
     try:
         config = json.loads(args.config_json)
     except json.JSONDecodeError as exc:
-        print(f"slack-relay recap: invalid config JSON: {exc}", file=sys.stderr)
+        print(f"agent-relay recap: invalid config JSON: {exc}", file=sys.stderr)
         return 1
 
     try:
         data = build_recap(config, since_spec=args.since, now=local_now(args.now) if args.now else None)
     except RecapError as exc:
-        print(f"slack-relay recap: {exc}", file=sys.stderr)
+        print(f"agent-relay recap: {exc}", file=sys.stderr)
         return 2
 
     if args.format == "raw":

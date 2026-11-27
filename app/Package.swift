@@ -3,18 +3,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "SlackRelay",
+    name: "AgentRelay",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "SlackRelay", targets: ["SlackRelay"])
+        .executable(name: "AgentRelay", targets: ["AgentRelay"])
     ],
     targets: [
-        // Native window over the slack-relay CLI; every read and write goes through its --json commands
+        // Native window over the agent-relay CLI; every read and write goes through its --json commands
         .executableTarget(
-            name: "SlackRelay",
-            path: "Sources/SlackRelay"
+            name: "AgentRelay",
+            path: "Sources/AgentRelay"
         )
     ]
 )

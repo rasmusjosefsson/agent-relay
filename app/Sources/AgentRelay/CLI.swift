@@ -7,10 +7,10 @@ struct CLIResult: Sendable {
 
     var ok: Bool { status == 0 }
     var text: String { String(decoding: stdout, as: UTF8.self) }
-    /// Last stderr line without the "slack-relay: " prefix, for inline errors.
+    /// Last stderr line without the "agent-relay: " prefix, for inline errors.
     var message: String {
         let line = stderr.split(separator: "\n").last.map(String.init) ?? text.split(separator: "\n").last.map(String.init) ?? ""
-        return line.replacingOccurrences(of: "slack-relay: ", with: "")
+        return line.replacingOccurrences(of: "agent-relay: ", with: "")
     }
 }
 
@@ -23,7 +23,7 @@ extension RelayCLI {
     func run(_ args: String...) async -> CLIResult { await run(args, stdin: nil) }
 }
 
-/// Runs the real `slack-relay` with the user's login-shell PATH, so jq, bash 4 and the agent CLIs resolve
+/// Runs the real `agent-relay` with the user's login-shell PATH, so jq, bash 4 and the agent CLIs resolve
 /// the same way they do in Terminal.
 struct ShellCLI: RelayCLI {
     let executable: String
@@ -31,21 +31,21 @@ struct ShellCLI: RelayCLI {
 
     var location: String { executable }
 
-    static let pathOverrideKey = "slackRelayPath"
+    static let pathOverrideKey = "agentRelayPath"
 
     static func locate() -> ShellCLI {
         let path = loginPath()
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = path
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        // A dev checkout's bin/slack-relay, three levels up from this file
+        // A dev checkout's bin/agent-relay, three levels up from this file
         let checkout = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("bin/slack-relay").path
+            .appendingPathComponent("bin/agent-relay").path
         let candidates = [UserDefaults.standard.string(forKey: pathOverrideKey)].compactMap { $0 }
-            + path.split(separator: ":").map { "\($0)/slack-relay" }
-            + ["\(home)/bin/slack-relay", "\(home)/.local/bin/slack-relay", checkout]
-        let found = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "slack-relay"
+            + path.split(separator: ":").map { "\($0)/agent-relay" }
+            + ["\(home)/bin/agent-relay", "\(home)/.local/bin/agent-relay", checkout]
+        let found = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "agent-relay"
         return ShellCLI(executable: found, environment: env)
     }
 
@@ -53,7 +53,7 @@ struct ShellCLI: RelayCLI {
     private static func loginPath() -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let fallback = ["/opt/homebrew/bin", "/usr/local/bin", "\(home)/.local/bin", "\(home)/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-        let marker = "__SLACK_RELAY_PATH__"
+        let marker = "__AGENT_RELAY_PATH__"
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         process.arguments = ["-ilc", "printf '\(marker)%s\(marker)' \"$PATH\""]
@@ -114,7 +114,7 @@ struct ShellCLI: RelayCLI {
             _ = exited.wait(timeout: .now() + 2)
             try? out.fileHandleForReading.close()
             try? err.fileHandleForReading.close()
-            return CLIResult(status: 124, stdout: Data(), stderr: "slack-relay \(args.first ?? "") took longer than 2 minutes")
+            return CLIResult(status: 124, stdout: Data(), stderr: "agent-relay \(args.first ?? "") took longer than 2 minutes")
         }
         if reads.wait(timeout: .now() + 5) == .timedOut {
             // a background child still holds the pipes; what was read so far is all there is

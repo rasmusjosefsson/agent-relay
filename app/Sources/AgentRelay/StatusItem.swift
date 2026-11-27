@@ -37,7 +37,7 @@ final class StatusItem: NSObject, NSMenuDelegate {
         let name = running
             ? "antenna.radiowaves.left.and.right"
             : "antenna.radiowaves.left.and.right.slash"
-        let label = store.status == nil ? "Slack Relay" : running ? "Slack Relay, running" : "Slack Relay, stopped"
+        let label = store.status == nil ? "Agent Relay" : running ? "Agent Relay, running" : "Agent Relay, stopped"
         item.button?.toolTip = label
         item.button?.setAccessibilityLabel(label)
         guard name != symbol else { return }
@@ -74,7 +74,7 @@ final class StatusItem: NSObject, NSMenuDelegate {
             menu.addItem(entry)
         }
         if !running.isEmpty { menu.addItem(.separator()) }
-        menu.addItem(item("Open Slack Relay", #selector(openWindow(_:))))
+        menu.addItem(item("Open Agent Relay", #selector(openWindow(_:))))
         if let action = store.serveAction {
             let busy = NSMenuItem(title: action == "start" ? "Starting…" : "Stopping…", action: nil, keyEquivalent: "")
             busy.isEnabled = false
@@ -85,7 +85,7 @@ final class StatusItem: NSObject, NSMenuDelegate {
             menu.addItem(item("Start Relay", #selector(startRelay(_:))))
         }
         menu.addItem(.separator())
-        menu.addItem(item("Quit Slack Relay", #selector(quit(_:))))
+        menu.addItem(item("Quit Agent Relay", #selector(quit(_:))))
     }
 
     private var headline: String {

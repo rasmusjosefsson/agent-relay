@@ -105,7 +105,7 @@ struct ConnectorsPane: View {
                         .disabled(!store.checking.isEmpty)
                 }
             } footer: {
-                Text("A check is a shell command: exit 0 means signed in, and its first line is shown with anything token-like removed. Clear a check to turn the connector off. Add more with slack-relay config set connectors.<name> '{\"title\": …, \"check\": …}'.")
+                Text("A check is a shell command: exit 0 means signed in, and its first line is shown with anything token-like removed. Clear a check to turn the connector off. Add more with agent-relay config set connectors.<name> '{\"title\": …, \"check\": …}'.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)

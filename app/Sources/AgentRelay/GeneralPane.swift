@@ -31,7 +31,7 @@ struct GeneralPane: View {
             if let error = store.statusError {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
-                    LabeledContent("slack-relay", value: store.cli.location.abbreviatingHome)
+                    LabeledContent("agent-relay", value: store.cli.location.abbreviatingHome)
                 }
             }
             if let status = store.status { RelaySection(status: status, store: store) }
