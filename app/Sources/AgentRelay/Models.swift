@@ -1,6 +1,6 @@
 import Foundation
 
-/// `slack-relay status --json`
+/// `agent-relay status --json`
 struct Status: Decodable, Equatable {
     var serve: Serve
     var dispatcher: Dispatcher
@@ -101,7 +101,7 @@ struct ContextLine: Decodable, Equatable, Hashable {
     var text: String
 }
 
-/// One step from `slack-relay activity --json`.
+/// One step from `agent-relay activity --json`.
 struct ActivityRow: Decodable, Equatable, Hashable {
     /// relay, start, thinking, tool, output, text, error, or done
     var kind: String
@@ -209,12 +209,12 @@ struct Run: Identifiable, Equatable {
     }
 }
 
-/// `slack-relay connectors --json`; `ok` is nil when the connector is turned off.
+/// `agent-relay connectors --json`; `ok` is nil when the connector is turned off.
 struct Connector: Decodable, Equatable, Identifiable {
     var name: String
     var title: String
     var check: String
-    /// Slack: checked by slack-relay itself, so there's no command to edit
+    /// Slack: checked by agent-relay itself, so there's no command to edit
     var builtin: Bool?
     var ok: Bool?
     var detail: String
@@ -222,14 +222,14 @@ struct Connector: Decodable, Equatable, Identifiable {
     var id: String { name }
 }
 
-/// `slack-relay auth --json` when several workspaces are signed in.
+/// `agent-relay auth --json` when several workspaces are signed in.
 struct SlackAuthFailure: Decodable {
     var ok: Bool?
     var error: String?
     var workspaces: [SlackWorkspace]?
 }
 
-/// One signed-in Slack team from `slack-relay auth --json`.
+/// One signed-in Slack team from `agent-relay auth --json`.
 struct SlackWorkspace: Decodable, Equatable, Identifiable {
     var name: String
     var domain: String
@@ -242,7 +242,7 @@ struct SlackWorkspace: Decodable, Equatable, Identifiable {
     var selector: String { domain.isEmpty ? name : domain }
 }
 
-/// `slack-relay memory --json`
+/// `agent-relay memory --json`
 struct Memory: Decodable, Equatable {
     var path: String
     var exists: Bool
@@ -251,7 +251,7 @@ struct Memory: Decodable, Equatable {
     var text: String
 }
 
-/// `slack-relay doctor --json`
+/// `agent-relay doctor --json`
 struct DoctorCheck: Decodable, Equatable, Identifiable {
     var check: String
     var ok: Bool
@@ -260,7 +260,7 @@ struct DoctorCheck: Decodable, Equatable, Identifiable {
     var id: String { check }
 }
 
-/// `slack-relay channels --json`
+/// `agent-relay channels --json`
 struct ChannelName: Decodable, Equatable {
     var id: String
     var name: String?
@@ -269,7 +269,7 @@ struct ChannelName: Decodable, Equatable {
     var label: String? { name.map { $0.hasPrefix("@") ? $0 : "#\($0)" } }
 }
 
-/// `slack-relay config fields --json`
+/// `agent-relay config fields --json`
 struct ConfigFields: Decodable, Equatable {
     var groups: [Group]
     var fields: [Field]

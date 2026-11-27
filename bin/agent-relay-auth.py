@@ -42,7 +42,7 @@ class AuthError(Exception):
 
 
 def note(message):
-    print(f"slack-relay auth: {message}", file=sys.stderr)
+    print(f"agent-relay auth: {message}", file=sys.stderr)
 
 
 def find_slack():
@@ -473,7 +473,7 @@ def main():
 
     app_path, binary = find_slack()
     was_running = stop_slack(app_path)
-    root = tempfile.mkdtemp(prefix="slack-relay-auth.")
+    root = tempfile.mkdtemp(prefix="agent-relay-auth.")
     profile = os.path.join(root, "profile")
     proc = None
     try:
@@ -552,7 +552,7 @@ if __name__ == "__main__":
     try:
         main()
     except AuthError as error:
-        print(f"slack-relay auth: {error}", file=sys.stderr)
+        print(f"agent-relay auth: {error}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         sys.exit(130)

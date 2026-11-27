@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/slack-relay-recap-test.XXXXXX")
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/agent-relay-recap-test.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin" "$WORK/roots" "$WORK/agent"
 ME=U0123456789
@@ -10,7 +10,7 @@ ME=U0123456789
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # 1. Python unit tests: Monday lookback, org allowlist, CI/review summaries, Langfuse filtering
-python3 - "$ROOT/bin/slack-relay-recap.py" <<'PY' || fail "python unit tests"
+python3 - "$ROOT/bin/agent-relay-recap.py" <<'PY' || fail "python unit tests"
 import datetime as dt
 import importlib.util
 import io
@@ -264,9 +264,9 @@ cat >"$WORK/config.json" <<EOF
 }
 EOF
 
-export PATH="$WORK/bin:$PATH" SLACK_RELAY_SLACK_BIN="$WORK/bin/slack" FAKE_WHOAMI="$ME" \
-  SLACK_FAKE_DIR="$WORK" SLACK_RELAY_INTERVAL=0 SLACK_RELAY_CONFIG="$WORK/config.json" SLACK_RELAY_STATE="$WORK/state"
-relay="$ROOT/bin/slack-relay"
+export PATH="$WORK/bin:$PATH" AGENT_RELAY_SLACK_BIN="$WORK/bin/slack" FAKE_WHOAMI="$ME" \
+  SLACK_FAKE_DIR="$WORK" AGENT_RELAY_INTERVAL=0 AGENT_RELAY_CONFIG="$WORK/config.json" AGENT_RELAY_STATE="$WORK/state"
+relay="$ROOT/bin/agent-relay"
 tab=$'\t'
 
 # 3. Empty github_orgs must refuse instead of leaking personal repos
@@ -308,25 +308,25 @@ grep -Fq "Make threshold configurable" "$WORK/last-prompt.txt" || fail "review c
 # 7. Slack !mac recap raw (0-token) and !mac recap 7d funny
 rm -f "$WORK/sent.tsv" "$WORK/last-prompt.txt"
 printf '%s\n' "1700000101.000000${tab}id:C0000000001${tab}$ME${tab}!mac recap raw" >"$WORK/history.tsv"
-SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000100.000000 "$relay" serve 2>/dev/null
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000100.000000 "$relay" serve 2>/dev/null
 [[ ! -e "$WORK/last-prompt.txt" ]] || fail "Slack recap raw invoked the LLM"
 grep -Fq "acme-org/api #101" "$WORK/sent.tsv" || fail "Slack recap raw missing PR: $(cat "$WORK/sent.tsv")"
 ! grep -Fq "rasmus/notes" "$WORK/sent.tsv" || fail "Slack recap raw leaked personal repo"
 
 rm -f "$WORK/sent.tsv" "$WORK/last-prompt.txt"
 printf '%s\n' "1700000102.000000${tab}id:C0000000001${tab}$ME${tab}!mac recap 7d funny" >"$WORK/history.tsv"
-SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000101.000000 "$relay" serve 2>/dev/null
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000101.000000 "$relay" serve 2>/dev/null
 grep -Fq "summary(funny)" "$WORK/sent.tsv" || fail "Slack recap 7d funny failed: $(cat "$WORK/sent.tsv")"
 grep -Fq "https://jira.example/browse/ADE-42|ADE-42" "$WORK/sent.tsv" || fail "Jira auto-linking missing in Slack recap: $(cat "$WORK/sent.tsv")"
 
 rm -f "$WORK/sent.tsv"
 printf '%s\n' "1700000103.000000${tab}id:C0000000001${tab}$ME${tab}!mac recap 7d detailed" >"$WORK/history.tsv"
-SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000102.000000 "$relay" serve 2>/dev/null
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000102.000000 "$relay" serve 2>/dev/null
 grep -Fq "summary(detailed)" "$WORK/sent.tsv" || fail "Slack recap 7d detailed failed: $(cat "$WORK/sent.tsv")"
 
 rm -f "$WORK/sent.tsv"
 printf '%s\n' "1700000104.000000${tab}id:C0000000001${tab}$ME${tab}!mac recap nonsense" >"$WORK/history.tsv"
-SLACK_RELAY_ONCE=1 SLACK_RELAY_SINCE=1700000103.000000 "$relay" serve 2>/dev/null
+AGENT_RELAY_ONCE=1 AGENT_RELAY_SINCE=1700000103.000000 "$relay" serve 2>/dev/null
 grep -Fq "Recap usage:" "$WORK/sent.tsv" || fail "Slack invalid recap args did not show usage: $(cat "$WORK/sent.tsv")"
 
 echo "recap tests passed"

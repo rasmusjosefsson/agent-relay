@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/rasmusjosefsson/slack-relay/config.schema.json",
-  "title": "slack-relay config",
-  "description": "~/.config/slack-relay/config.json. Every key is optional except channel and user; missing keys use these defaults.",
+  "$id": "https://github.com/rasmusjosefsson/agent-relay/config.schema.json",
+  "title": "agent-relay config",
+  "description": "~/.config/agent-relay/config.json. Every key is optional except channel and user; missing keys use these defaults.",
   "type": "object",
   "required": ["channel", "user"],
   "properties": {
     "channel": {
       "title": "Slack channel",
-      "description": "Conversation ID of the private channel the bot reads and posts in. `slack-relay config set channel` also accepts the channel link.",
+      "description": "Conversation ID of the private channel the bot reads and posts in. `agent-relay config set channel` also accepts the channel link.",
       "type": "string",
       "pattern": "^[CDG][A-Z0-9]{8,}$",
       "default": ""
@@ -74,13 +74,13 @@
           "title": "Token file",
           "type": "string",
           "minLength": 1,
-          "default": "~/.config/slack-relay/slack-token"
+          "default": "~/.config/agent-relay/slack-token"
         },
         "cookie_file": {
           "title": "Cookie file",
           "description": "Needed for xoxc- tokens. Empty for xoxp- tokens.",
           "type": "string",
-          "default": "~/.config/slack-relay/slack-cookie"
+          "default": "~/.config/agent-relay/slack-cookie"
         }
       }
     },
@@ -195,7 +195,7 @@
     },
     "connectors": {
       "title": "Connectors",
-      "description": "Tools the agents reach through their own CLIs. `slack-relay connectors` runs each check with bash -o pipefail: exit 0 means signed in, and the first line it prints is shown. An empty check turns a connector off.",
+      "description": "Tools the agents reach through their own CLIs. `agent-relay connectors` runs each check with bash -o pipefail: exit 0 means signed in, and the first line it prints is shown. An empty check turns a connector off.",
       "type": "object",
       "propertyNames": { "pattern": "^[a-z0-9_-]+$" },
       "additionalProperties": {
@@ -229,7 +229,7 @@
     },
     "recap": {
       "title": "Work recap",
-      "description": "Scoped work summaries for `!bot recap` and `slack-relay recap`. Only GitHub orgs listed in github_orgs are included; personal repos are never included.",
+      "description": "Scoped work summaries for `!bot recap` and `agent-relay recap`. Only GitHub orgs listed in github_orgs are included; personal repos are never included.",
       "type": "object",
       "properties": {
         "github_orgs": {

@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let window = MainWindow.make(root: MainWindowView(nav: nav, store: store))
         window.title = nav.selected.rawValue
-        window.setFrameAutosaveName("SlackRelayMain")
+        window.setFrameAutosaveName("AgentRelayMain")
         window.delegate = self
         withObservationTracking { _ = nav.selected } onChange: { [weak self] in
             Task { @MainActor in self?.trackTitle() }
@@ -84,9 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Hide Slack Relay", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Hide Agent Relay", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Slack Relay", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Agent Relay", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
         // Edit menu so copy, paste and undo work in text fields
@@ -155,7 +155,7 @@ enum MainWindow {
     }
 }
 
-/// `SlackRelay --snapshot <dir>`: each pane against the real CLI, written as <pane>-light.png and <pane>-dark.png.
+/// `AgentRelay --snapshot <dir>`: each pane against the real CLI, written as <pane>-light.png and <pane>-dark.png.
 /// Uses cacheDisplay rather than ImageRenderer, which leaves Forms blank.
 @MainActor
 enum Snapshot {

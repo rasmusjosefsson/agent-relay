@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/slack-relay-api.XXXXXX")
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/agent-relay-api.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/bin"
 printf 'xoxc-fake-token\n' >"$WORK/token"
@@ -79,15 +79,15 @@ chmod +x "$WORK/bin/curl"
 
 jq -n --arg t "$WORK/token" --arg c "$WORK/cookie" \
   '{channel: "C0000000001", user: "U0123456789", slack: {token_file: $t, cookie_file: $c}}' >"$WORK/config.json"
-export SLACK_RELAY_CONFIG="$WORK/config.json" SLACK_RELAY_STATE="$WORK/state" SLACK_RELAY_CURL="$WORK/bin/curl" FAKE_LOG="$WORK/requests"
-relay="$ROOT/bin/slack-relay"
+export AGENT_RELAY_CONFIG="$WORK/config.json" AGENT_RELAY_STATE="$WORK/state" AGENT_RELAY_CURL="$WORK/bin/curl" FAKE_LOG="$WORK/requests"
+relay="$ROOT/bin/agent-relay"
 tab=$'\t'
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 [[ "$("$relay" _slack whoami)" == U0123456789 ]] || fail "whoami"
 [[ "$("$relay" _slack info C0000000001)" == relay-test ]] || fail "channel name"
 jq '.channels = ["D0000000001"]' "$WORK/config.json" >"$WORK/dm.json"
-dm=$(SLACK_RELAY_CONFIG="$WORK/dm.json" "$relay" _slack info D0000000001)
+dm=$(AGENT_RELAY_CONFIG="$WORK/dm.json" "$relay" _slack info D0000000001)
 [[ "$dm" == @other.person ]] || fail "DM name: $dm"
 "$relay" _slack info C0OTHER0001 2>/dev/null && fail "looked up a channel outside the config"
 "$relay" _slack update C0000000001 400.000 "edited"
